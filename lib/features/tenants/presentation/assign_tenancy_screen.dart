@@ -26,7 +26,9 @@ class _AssignTenancyScreenState extends ConsumerState<AssignTenancyScreen> {
   DateTime _moveInDate = DateTime.now();
   final _agreedRentCtrl = TextEditingController();
   final _depositCtrl = TextEditingController();
+  int _billingDueDay = 5; // Default 5th of every month
   bool _isLoading = false;
+  bool _prefilledHandled = false;
 
   @override
   void initState() {
@@ -65,6 +67,7 @@ class _AssignTenancyScreenState extends ConsumerState<AssignTenancyScreen> {
         moveInDateEpoch: _moveInDate.millisecondsSinceEpoch,
         agreedRentPaise: rentPaise,
         securityDepositPaise: depositPaise,
+        billingDueDay: _billingDueDay,
       );
 
       ref.invalidate(roomsListProvider);
@@ -90,6 +93,18 @@ class _AssignTenancyScreenState extends ConsumerState<AssignTenancyScreen> {
     final roomsAsync = ref.watch(roomsListProvider);
     final tenantsAsync = ref.watch(tenantsListProvider);
 
+    // Auto-fill rent from preselected room
+    roomsAsync.whenData((rooms) {
+      if (_selectedRoomId != null && !_prefilledHandled) {
+        final match = rooms.where((r) => r.id == _selectedRoomId).firstOrNull;
+        if (match != null) {
+          _prefilledHandled = true;
+          _agreedRentCtrl.text = CurrencyHelper.paiseToRupeesString(match.defaultRentPaise);
+          _depositCtrl.text = CurrencyHelper.paiseToRupeesString(match.defaultRentPaise * 2);
+        }
+      }
+    });
+
     return Scaffold(
       appBar: AppBar(
         title: const Text('Assign Room / Move-In'),
@@ -102,7 +117,6 @@ class _AssignTenancyScreenState extends ConsumerState<AssignTenancyScreen> {
             // Select Room
             roomsAsync.when(
               data: (rooms) {
-                // Filter only vacant rooms (or the preselected room)
                 final vacantRooms = rooms.where((r) => !r.isOccupied || r.id == widget.preselectedRoomId).toList();
                 return DropdownButtonFormField<String>(
                   value: _selectedRoomId,
@@ -136,7 +150,6 @@ class _AssignTenancyScreenState extends ConsumerState<AssignTenancyScreen> {
             // Select Tenant
             tenantsAsync.when(
               data: (tenants) {
-                // Filter tenants who don't already have an active tenancy
                 final eligibleTenants = tenants.where((t) => t.activeTenancyId == null || t.id == widget.preselectedTenantId).toList();
                 return DropdownButtonFormField<String>(
                   value: _selectedTenantId,
@@ -183,6 +196,28 @@ class _AssignTenancyScreenState extends ConsumerState<AssignTenancyScreen> {
             ),
             const SizedBox(height: 16),
 
+            // Billing Due Day / Cycle
+            DropdownButtonFormField<int>(
+              value: _billingDueDay,
+              decoration: const InputDecoration(
+                labelText: 'Monthly Billing Cycle / Due Day *',
+                border: OutlineInputBorder(),
+                prefixIcon: Icon(Icons.event_repeat),
+              ),
+              items: const [
+                DropdownMenuItem(value: 1, child: Text('1st of every month')),
+                DropdownMenuItem(value: 5, child: Text('5th of every month (Standard)')),
+                DropdownMenuItem(value: 10, child: Text('10th of every month')),
+                DropdownMenuItem(value: 15, child: Text('15th of every month')),
+                DropdownMenuItem(value: 20, child: Text('20th of every month')),
+                DropdownMenuItem(value: 0, child: Text('End of month')),
+              ],
+              onChanged: (val) {
+                if (val != null) setState(() => _billingDueDay = val);
+              },
+            ),
+            const SizedBox(height: 16),
+
             // Agreed Rent
             TextFormField(
               controller: _agreedRentCtrl,
@@ -212,10 +247,11 @@ class _AssignTenancyScreenState extends ConsumerState<AssignTenancyScreen> {
 
             FilledButton.icon(
               onPressed: _isLoading ? null : _submit,
-              icon: _isLoading ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2)) : const Icon(Icons.check),
+              icon: _isLoading ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white)) : const Icon(Icons.check),
               label: const Text('Confirm Move-In'),
               style: FilledButton.styleFrom(padding: const EdgeInsets.symmetric(vertical: 14)),
             ),
+            const SizedBox(height: 32),
           ],
         ),
       ),

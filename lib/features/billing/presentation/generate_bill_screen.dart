@@ -24,16 +24,24 @@ class _GenerateBillScreenState extends ConsumerState<GenerateBillScreen> {
   final _formKey = GlobalKey<FormState>();
   String? _selectedRoomId;
   RoomWithDetails? _selectedRoom;
+  bool _preselectedHandled = false;
 
+  // Rent & Advance
   final _rentCtrl = TextEditingController();
   final _rentAdvAppliedCtrl = TextEditingController(text: '0');
   int _rentAdvAvailablePaise = 0;
 
+  // Electricity Sub-Meter Reading & Rate
+  final _prevReadingCtrl = TextEditingController(text: '0');
+  final _newReadingCtrl = TextEditingController();
+  final _elecRateCtrl = TextEditingController(text: '10');
   final _elecAmountCtrl = TextEditingController(text: '0');
   final _elecUnitsCtrl = TextEditingController(text: '0');
   final _elecAdvAppliedCtrl = TextEditingController(text: '0');
   int _elecAdvAvailablePaise = 0;
+  int _previousReadingCentiunits = 0;
 
+  // Additional Charges & Due Date
   final _additionalChargesCtrl = TextEditingController(text: '0');
   int _previousBalancePaise = 0;
   DateTime _dueDate = DateTime.now().add(const Duration(days: 5));
@@ -49,6 +57,9 @@ class _GenerateBillScreenState extends ConsumerState<GenerateBillScreen> {
   void dispose() {
     _rentCtrl.dispose();
     _rentAdvAppliedCtrl.dispose();
+    _prevReadingCtrl.dispose();
+    _newReadingCtrl.dispose();
+    _elecRateCtrl.dispose();
     _elecAmountCtrl.dispose();
     _elecUnitsCtrl.dispose();
     _elecAdvAppliedCtrl.dispose();
@@ -57,12 +68,27 @@ class _GenerateBillScreenState extends ConsumerState<GenerateBillScreen> {
   }
 
   Future<void> _onRoomSelected(RoomWithDetails room) async {
+    final period = ref.read(selectedPeriodProvider);
+
     setState(() {
       _selectedRoom = room;
+      _selectedRoomId = room.id;
       _rentCtrl.text = CurrencyHelper.paiseToRupeesString(room.agreedRentPaise ?? room.defaultRentPaise);
-    });
 
-    final period = ref.read(selectedPeriodProvider);
+      // Electricity Sub-meter defaults
+      _previousReadingCentiunits = room.latestReadingCentiunits ?? 0;
+      _prevReadingCtrl.text = CurrencyHelper.centiunitsToString(_previousReadingCentiunits);
+      _elecRateCtrl.text = CurrencyHelper.paiseToRupeesString(room.electricityRatePaise);
+
+      // Set due date according to tenant's billing cycle day if configured
+      if (room.billingDueDay != null && room.billingDueDay! > 0) {
+        final day = room.billingDueDay!.clamp(1, 28);
+        _dueDate = DateTime(period.year, period.month, day);
+      } else if (room.billingDueDay == 0) {
+        // End of month
+        _dueDate = DateTime(period.year, period.month + 1, 0);
+      }
+    });
 
     if (room.activeTenancyId != null) {
       // 1. Fetch available Rent Advance & Electricity Advance independently
@@ -86,13 +112,13 @@ class _GenerateBillScreenState extends ConsumerState<GenerateBillScreen> {
       setState(() => _previousBalancePaise = prev);
     }
 
-    // 3. Fetch allocated electricity if available
+    // 3. Fetch pre-allocated electricity if any
     final elecPaise = await ref.read(electricityDaoProvider).getAllocatedElectricityForRoom(
       roomId: room.id,
       month: period.month,
       year: period.year,
     );
-    if (elecPaise != null) {
+    if (elecPaise != null && elecPaise > 0) {
       setState(() {
         _elecAmountCtrl.text = CurrencyHelper.paiseToRupeesString(elecPaise);
         final autoElecAdv = _elecAdvAvailablePaise >= elecPaise ? elecPaise : _elecAdvAvailablePaise;
@@ -101,8 +127,34 @@ class _GenerateBillScreenState extends ConsumerState<GenerateBillScreen> {
     }
   }
 
+  void _recalculateElectricity() {
+    final prevCenti = _previousReadingCentiunits;
+    final newCenti = CurrencyHelper.parseReadingToCentiunits(_newReadingCtrl.text);
+    final ratePaise = CurrencyHelper.parseRupeesToPaise(_elecRateCtrl.text);
+
+    if (_newReadingCtrl.text.trim().isNotEmpty && newCenti >= prevCenti) {
+      final unitsCenti = newCenti - prevCenti;
+      final chargePaise = ((unitsCenti * ratePaise) + 50) ~/ 100;
+
+      setState(() {
+        _elecUnitsCtrl.text = CurrencyHelper.centiunitsToString(unitsCenti);
+        _elecAmountCtrl.text = CurrencyHelper.paiseToRupeesString(chargePaise);
+
+        // Auto-suggest electricity advance application
+        final autoElecAdv = _elecAdvAvailablePaise >= chargePaise ? chargePaise : _elecAdvAvailablePaise;
+        _elecAdvAppliedCtrl.text = CurrencyHelper.paiseToRupeesString(autoElecAdv);
+      });
+    }
+  }
+
   Future<void> _generateBill() async {
-    if (!_formKey.currentState!.validate() || _selectedRoom == null) return;
+    if (!_formKey.currentState!.validate() || _selectedRoom == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Please select an occupied room before generating a bill.')),
+      );
+      return;
+    }
+
     if (_selectedRoom!.activeTenancyId == null) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Cannot generate bill: Room has no active tenant.')),
@@ -145,9 +197,27 @@ class _GenerateBillScreenState extends ConsumerState<GenerateBillScreen> {
 
       final calculated = BillingEngine.calculateMonthlyBill(input);
 
+      // 1. Save monthly bill
       await ref.read(billingDaoProvider).saveMonthlyBill(calculated);
 
+      // 2. If new meter reading was entered, automatically save to meter_readings table
+      final newReadingText = _newReadingCtrl.text.trim();
+      if (newReadingText.isNotEmpty && _selectedRoom!.meterId != null) {
+        final newReadingCenti = CurrencyHelper.parseReadingToCentiunits(newReadingText);
+        if (newReadingCenti >= _previousReadingCentiunits) {
+          await ref.read(electricityDaoProvider).recordMeterReading(
+            meterId: _selectedRoom!.meterId!,
+            billingMonth: period.month,
+            billingYear: period.year,
+            currentReadingCentiunits: newReadingCenti,
+            previousReadingCentiunits: _previousReadingCentiunits,
+            notes: 'Recorded during bill generation (${calculated.billNumber})',
+          );
+        }
+      }
+
       ref.invalidate(billsListProvider);
+      ref.invalidate(roomsListProvider);
       ref.invalidate(dashboardSummaryProvider);
       ref.invalidate(tenancyAdvancesProvider(_selectedRoom!.activeTenancyId!));
 
@@ -170,6 +240,21 @@ class _GenerateBillScreenState extends ConsumerState<GenerateBillScreen> {
   Widget build(BuildContext context) {
     final period = ref.watch(selectedPeriodProvider);
     final roomsAsync = ref.watch(roomsListProvider);
+
+    // Auto-select room if passed via preselectedRoomId
+    roomsAsync.whenData((rooms) {
+      if (_selectedRoomId != null && !_preselectedHandled) {
+        final match = rooms.where((r) => r.id == _selectedRoomId && r.isOccupied).firstOrNull;
+        if (match != null) {
+          _preselectedHandled = true;
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            if (mounted && _selectedRoom == null) {
+              _onRoomSelected(match);
+            }
+          });
+        }
+      }
+    });
 
     final rentPaise = CurrencyHelper.parseRupeesToPaise(_rentCtrl.text);
     final rentAdvAppliedPaise = CurrencyHelper.parseRupeesToPaise(_rentAdvAppliedCtrl.text).clamp(
@@ -203,136 +288,206 @@ class _GenerateBillScreenState extends ConsumerState<GenerateBillScreen> {
           children: [
             // Period Badge
             Container(
-              padding: const EdgeInsets.all(12),
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
               decoration: BoxDecoration(
                 color: AppColors.primaryContainer.withOpacity(0.3),
                 borderRadius: BorderRadius.circular(10),
               ),
-              child: Text(
-                'Billing Period: ${DateHelper.formatBillingPeriod(period.month, period.year)}',
-                style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  const Text('Billing Period:', style: TextStyle(fontWeight: FontWeight.w600, fontSize: 13)),
+                  Text(
+                    DateHelper.formatBillingPeriod(period.month, period.year),
+                    style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14, color: AppColors.primary),
+                  ),
+                ],
               ),
             ),
             const SizedBox(height: 16),
 
-            // Select Occupied Room
-            roomsAsync.when(
-              data: (rooms) {
-                final occupiedRooms = rooms.where((r) => r.isOccupied).toList();
-                if (occupiedRooms.isEmpty) {
-                  return const Card(
-                    child: Padding(
-                      padding: EdgeInsets.all(16),
-                      child: Text('No occupied rooms available to generate bills for.'),
-                    ),
-                  );
-                }
-
-                return DropdownButtonFormField<String>(
-                  value: _selectedRoomId,
-                  decoration: const InputDecoration(
-                    labelText: 'Select Occupied Room *',
-                    border: OutlineInputBorder(),
-                    prefixIcon: Icon(Icons.meeting_room),
+            // Room Selector / Banner
+            if (widget.preselectedRoomId != null && _selectedRoom != null) ...[
+              // Pre-selected Room Banner (no dropdown needed)
+              Card(
+                color: AppColors.surfaceVariant.withOpacity(0.5),
+                child: Padding(
+                  padding: const EdgeInsets.all(16),
+                  child: Row(
+                    children: [
+                      const CircleAvatar(
+                        backgroundColor: AppColors.primary,
+                        child: Icon(Icons.meeting_room, color: Colors.white),
+                      ),
+                      const SizedBox(width: 14),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              _selectedRoom!.roomNumber,
+                              style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
+                            ),
+                            const SizedBox(height: 2),
+                            Text(
+                              'Tenant: ${_selectedRoom!.activeTenantName ?? "Active Tenant"}',
+                              style: TextStyle(color: Colors.grey.shade700, fontSize: 13),
+                            ),
+                            if (_selectedRoom!.meterNumber != null)
+                              Text(
+                                'Meter: ${_selectedRoom!.meterNumber} (Last: ${_prevReadingCtrl.text})',
+                                style: const TextStyle(color: AppColors.primary, fontSize: 12, fontWeight: FontWeight.w500),
+                              ),
+                          ],
+                        ),
+                      ),
+                      const Icon(Icons.check_circle, color: AppColors.primary),
+                    ],
                   ),
-                  items: occupiedRooms.map((r) {
-                    return DropdownMenuItem(
-                      value: r.id,
-                      child: Text('${r.roomNumber} - ${r.activeTenantName}'),
+                ),
+              ),
+            ] else ...[
+              roomsAsync.when(
+                data: (rooms) {
+                  final occupiedRooms = rooms.where((r) => r.isOccupied).toList();
+                  if (occupiedRooms.isEmpty) {
+                    return const Card(
+                      child: Padding(
+                        padding: EdgeInsets.all(16),
+                        child: Text('No occupied rooms available to generate bills for.'),
+                      ),
                     );
-                  }).toList(),
-                  onChanged: (val) {
-                    if (val != null) {
-                      _selectedRoomId = val;
-                      final r = rooms.firstWhere((item) => item.id == val);
-                      _onRoomSelected(r);
-                    }
-                  },
-                  validator: (v) => v == null ? 'Please select a room' : null,
-                );
-              },
-              loading: () => const LinearProgressIndicator(),
-              error: (e, _) => Text('Error: $e'),
-            ),
+                  }
+
+                  return DropdownButtonFormField<String>(
+                    value: _selectedRoomId,
+                    decoration: const InputDecoration(
+                      labelText: 'Select Occupied Room *',
+                      border: OutlineInputBorder(),
+                      prefixIcon: Icon(Icons.meeting_room),
+                    ),
+                    items: occupiedRooms.map((r) {
+                      return DropdownMenuItem(
+                        value: r.id,
+                        child: Text('${r.roomNumber} - ${r.activeTenantName}'),
+                      );
+                    }).toList(),
+                    onChanged: (val) {
+                      if (val != null) {
+                        final r = rooms.firstWhere((item) => item.id == val);
+                        _onRoomSelected(r);
+                      }
+                    },
+                    validator: (v) => v == null ? 'Please select a room' : null,
+                  );
+                },
+                loading: () => const LinearProgressIndicator(),
+                error: (e, _) => Text('Error: $e'),
+              ),
+            ],
             const SizedBox(height: 20),
 
             // 1. INDEPENDENT ROOM RENT & RENT ADVANCE SECTION
             Card(
-              elevation: 0,
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(14),
-                side: BorderSide(color: AppColors.primary.withOpacity(0.3)),
-              ),
               child: Padding(
                 padding: const EdgeInsets.all(16),
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
                       children: [
-                        const Text('1. Room Rent', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
-                        Container(
-                          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-                          decoration: BoxDecoration(
-                            color: AppColors.primaryContainer,
-                            borderRadius: BorderRadius.circular(8),
-                          ),
-                          child: Text(
-                            'Available Advance: ${CurrencyHelper.formatPaise(_rentAdvAvailablePaise)}',
-                            style: const TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: AppColors.primary),
-                          ),
+                        const Icon(Icons.home, color: AppColors.primary, size: 20),
+                        const SizedBox(width: 8),
+                        Text(
+                          '1. Room Rent',
+                          style: Theme.of(context).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.bold),
                         ),
                       ],
                     ),
-                    const SizedBox(height: 12),
+                    const Divider(height: 24),
                     TextFormField(
                       controller: _rentCtrl,
                       keyboardType: TextInputType.number,
                       decoration: const InputDecoration(
-                        labelText: 'Monthly Room Rent Charge (₹) *',
+                        labelText: 'Monthly Room Rent Amount (₹) *',
+                        prefixText: '₹ ',
                         border: OutlineInputBorder(),
-                        prefixIcon: Icon(Icons.home),
                       ),
+                      validator: (v) {
+                        if (v == null || v.isEmpty) return 'Rent amount required';
+                        if (CurrencyHelper.parseRupeesToPaise(v) <= 0) return 'Must be greater than 0';
+                        return null;
+                      },
                       onChanged: (_) => setState(() {}),
-                      validator: (v) => (v == null || CurrencyHelper.parseRupeesToPaise(v) <= 0) ? 'Required' : null,
                     ),
                     const SizedBox(height: 12),
-                    Row(
-                      children: [
-                        Expanded(
-                          child: TextFormField(
-                            controller: _rentAdvAppliedCtrl,
-                            keyboardType: TextInputType.number,
-                            decoration: const InputDecoration(
-                              labelText: 'Apply Rent Advance (₹)',
-                              hintText: 'Deducted from Rent Advance only',
-                              border: OutlineInputBorder(),
-                              prefixIcon: Icon(Icons.account_balance_wallet_outlined),
-                            ),
-                            onChanged: (_) => setState(() {}),
+
+                    // Available Rent Advance Card
+                    Container(
+                      padding: const EdgeInsets.all(12),
+                      decoration: BoxDecoration(
+                        color: AppColors.primary.withOpacity(0.06),
+                        borderRadius: BorderRadius.circular(8),
+                        border: Border.all(color: AppColors.primary.withOpacity(0.2)),
+                      ),
+                      child: Column(
+                        children: [
+                          Row(
+                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                            children: [
+                              const Text('Available Rent Advance:', style: TextStyle(fontSize: 12, color: Colors.grey)),
+                              Text(
+                                CurrencyHelper.formatPaise(_rentAdvAvailablePaise),
+                                style: const TextStyle(fontWeight: FontWeight.bold, color: AppColors.primary),
+                              ),
+                            ],
                           ),
-                        ),
-                        const SizedBox(width: 8),
-                        TextButton(
-                          onPressed: () {
-                            final maxApply = _rentAdvAvailablePaise >= rentPaise ? rentPaise : _rentAdvAvailablePaise;
-                            _rentAdvAppliedCtrl.text = CurrencyHelper.paiseToRupeesString(maxApply);
-                            setState(() {});
-                          },
-                          child: const Text('Apply Max'),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 8),
-                    Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                      children: [
-                        Text('Outstanding Rent: ${CurrencyHelper.formatPaise(outstandingRentPaise)}',
-                            style: TextStyle(fontWeight: FontWeight.bold, color: outstandingRentPaise > 0 ? AppColors.error : AppColors.success, fontSize: 13)),
-                        Text('Remaining Advance: ${CurrencyHelper.formatPaise(remainingRentAdvPaise)}',
-                            style: const TextStyle(fontSize: 12, color: Colors.grey)),
-                      ],
+                          const SizedBox(height: 8),
+                          Row(
+                            children: [
+                              Expanded(
+                                child: TextFormField(
+                                  controller: _rentAdvAppliedCtrl,
+                                  keyboardType: TextInputType.number,
+                                  decoration: const InputDecoration(
+                                    labelText: 'Apply Rent Advance (₹)',
+                                    prefixText: '₹ ',
+                                    isDense: true,
+                                    border: OutlineInputBorder(),
+                                  ),
+                                  onChanged: (_) => setState(() {}),
+                                ),
+                              ),
+                              const SizedBox(width: 8),
+                              OutlinedButton(
+                                onPressed: _rentAdvAvailablePaise > 0
+                                    ? () {
+                                        final maxAllowed = _rentAdvAvailablePaise < rentPaise ? _rentAdvAvailablePaise : rentPaise;
+                                        setState(() {
+                                          _rentAdvAppliedCtrl.text = CurrencyHelper.paiseToRupeesString(maxAllowed);
+                                        });
+                                      }
+                                    : null,
+                                child: const Text('Max'),
+                              ),
+                            ],
+                          ),
+                          const SizedBox(height: 6),
+                          Row(
+                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                            children: [
+                              Text(
+                                'Outstanding Rent: ${CurrencyHelper.formatPaise(outstandingRentPaise)}',
+                                style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w600),
+                              ),
+                              Text(
+                                'Remaining Advance: ${CurrencyHelper.formatPaise(remainingRentAdvPaise)}',
+                                style: const TextStyle(fontSize: 11, color: Colors.grey),
+                              ),
+                            ],
+                          ),
+                        ],
+                      ),
                     ),
                   ],
                 ),
@@ -340,13 +495,8 @@ class _GenerateBillScreenState extends ConsumerState<GenerateBillScreen> {
             ),
             const SizedBox(height: 16),
 
-            // 2. INDEPENDENT ELECTRICITY & ELECTRICITY ADVANCE SECTION
+            // 2. ELECTRICITY SUB-METER READING & LIVE CALCULATION
             Card(
-              elevation: 0,
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(14),
-                side: BorderSide(color: Colors.amber.shade400),
-              ),
               child: Padding(
                 padding: const EdgeInsets.all(16),
                 child: Column(
@@ -355,42 +505,80 @@ class _GenerateBillScreenState extends ConsumerState<GenerateBillScreen> {
                     Row(
                       mainAxisAlignment: MainAxisAlignment.spaceBetween,
                       children: [
-                        const Text('2. Electricity Charges', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
-                        Container(
-                          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-                          decoration: BoxDecoration(
-                            color: Colors.amber.shade100,
-                            borderRadius: BorderRadius.circular(8),
+                        Row(
+                          children: [
+                            const Icon(Icons.bolt, color: Colors.amber, size: 20),
+                            const SizedBox(width: 8),
+                            Text(
+                              '2. Electricity Charges',
+                              style: Theme.of(context).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.bold),
+                            ),
+                          ],
+                        ),
+                        if (_selectedRoom?.meterNumber != null)
+                          Text(
+                            _selectedRoom!.meterNumber!,
+                            style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 12, color: Colors.grey),
                           ),
-                          child: Text(
-                            'Available Advance: ${CurrencyHelper.formatPaise(_elecAdvAvailablePaise)}',
-                            style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: Colors.amber.shade900),
+                      ],
+                    ),
+                    const Divider(height: 24),
+
+                    // Sub-Meter Reading Calculator Row
+                    Row(
+                      children: [
+                        Expanded(
+                          child: TextFormField(
+                            controller: _prevReadingCtrl,
+                            readOnly: true,
+                            decoration: const InputDecoration(
+                              labelText: 'Last Reading',
+                              suffixText: 'units',
+                              border: OutlineInputBorder(),
+                              filled: true,
+                            ),
+                          ),
+                        ),
+                        const SizedBox(width: 10),
+                        Expanded(
+                          child: TextFormField(
+                            controller: _newReadingCtrl,
+                            keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                            decoration: const InputDecoration(
+                              labelText: 'New Reading *',
+                              suffixText: 'units',
+                              border: OutlineInputBorder(),
+                              hintText: 'e.g. 1050',
+                            ),
+                            onChanged: (_) => _recalculateElectricity(),
                           ),
                         ),
                       ],
                     ),
-                    const SizedBox(height: 12),
+                    const SizedBox(height: 10),
+
                     Row(
                       children: [
+                        Expanded(
+                          child: TextFormField(
+                            controller: _elecRateCtrl,
+                            keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                            decoration: const InputDecoration(
+                              labelText: 'Rate per Unit',
+                              prefixText: '₹ ',
+                              border: OutlineInputBorder(),
+                            ),
+                            onChanged: (_) => _recalculateElectricity(),
+                          ),
+                        ),
+                        const SizedBox(width: 10),
                         Expanded(
                           child: TextFormField(
                             controller: _elecAmountCtrl,
                             keyboardType: TextInputType.number,
                             decoration: const InputDecoration(
-                              labelText: 'Electricity Charge (₹)',
-                              border: OutlineInputBorder(),
-                              prefixIcon: Icon(Icons.bolt),
-                            ),
-                            onChanged: (_) => setState(() {}),
-                          ),
-                        ),
-                        const SizedBox(width: 12),
-                        Expanded(
-                          child: TextFormField(
-                            controller: _elecUnitsCtrl,
-                            keyboardType: TextInputType.number,
-                            decoration: const InputDecoration(
-                              labelText: 'Units Consumed',
+                              labelText: 'Total Elec (₹)',
+                              prefixText: '₹ ',
                               border: OutlineInputBorder(),
                             ),
                             onChanged: (_) => setState(() {}),
@@ -398,42 +586,100 @@ class _GenerateBillScreenState extends ConsumerState<GenerateBillScreen> {
                         ),
                       ],
                     ),
-                    const SizedBox(height: 12),
-                    Row(
-                      children: [
-                        Expanded(
-                          child: TextFormField(
-                            controller: _elecAdvAppliedCtrl,
-                            keyboardType: TextInputType.number,
-                            decoration: const InputDecoration(
-                              labelText: 'Apply Electricity Advance (₹)',
-                              hintText: 'Deducted from Electricity Advance only',
-                              border: OutlineInputBorder(),
-                              prefixIcon: Icon(Icons.power_outlined),
+                    const SizedBox(height: 10),
+
+                    // Dynamic Math Indicator
+                    if (_newReadingCtrl.text.trim().isNotEmpty) ...[
+                      Container(
+                        padding: const EdgeInsets.all(10),
+                        decoration: BoxDecoration(
+                          color: Colors.amber.withOpacity(0.12),
+                          borderRadius: BorderRadius.circular(8),
+                          border: Border.all(color: Colors.amber.withOpacity(0.3)),
+                        ),
+                        child: Row(
+                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                          children: [
+                            Text(
+                              'Units: ${_elecUnitsCtrl.text} units × ₹${_elecRateCtrl.text}',
+                              style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 12),
                             ),
-                            onChanged: (_) => setState(() {}),
+                            Text(
+                              'Charge: ${CurrencyHelper.formatPaise(elecPaise)}',
+                              style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13, color: Colors.brown),
+                            ),
+                          ],
+                        ),
+                      ),
+                      const SizedBox(height: 10),
+                    ],
+
+                    // Available Electricity Advance Card
+                    Container(
+                      padding: const EdgeInsets.all(12),
+                      decoration: BoxDecoration(
+                        color: Colors.amber.withOpacity(0.08),
+                        borderRadius: BorderRadius.circular(8),
+                        border: Border.all(color: Colors.amber.withOpacity(0.2)),
+                      ),
+                      child: Column(
+                        children: [
+                          Row(
+                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                            children: [
+                              const Text('Available Electricity Advance:', style: TextStyle(fontSize: 12, color: Colors.grey)),
+                              Text(
+                                CurrencyHelper.formatPaise(_elecAdvAvailablePaise),
+                                style: const TextStyle(fontWeight: FontWeight.bold, color: Colors.amber),
+                              ),
+                            ],
                           ),
-                        ),
-                        const SizedBox(width: 8),
-                        TextButton(
-                          onPressed: () {
-                            final maxApply = _elecAdvAvailablePaise >= elecPaise ? elecPaise : _elecAdvAvailablePaise;
-                            _elecAdvAppliedCtrl.text = CurrencyHelper.paiseToRupeesString(maxApply);
-                            setState(() {});
-                          },
-                          child: const Text('Apply Max'),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 8),
-                    Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                      children: [
-                        Text('Outstanding Electricity: ${CurrencyHelper.formatPaise(outstandingElecPaise)}',
-                            style: TextStyle(fontWeight: FontWeight.bold, color: outstandingElecPaise > 0 ? Colors.deepOrange : AppColors.success, fontSize: 13)),
-                        Text('Remaining Advance: ${CurrencyHelper.formatPaise(remainingElecAdvPaise)}',
-                            style: const TextStyle(fontSize: 12, color: Colors.grey)),
-                      ],
+                          const SizedBox(height: 8),
+                          Row(
+                            children: [
+                              Expanded(
+                                child: TextFormField(
+                                  controller: _elecAdvAppliedCtrl,
+                                  keyboardType: TextInputType.number,
+                                  decoration: const InputDecoration(
+                                    labelText: 'Apply Electricity Advance (₹)',
+                                    prefixText: '₹ ',
+                                    isDense: true,
+                                    border: OutlineInputBorder(),
+                                  ),
+                                  onChanged: (_) => setState(() {}),
+                                ),
+                              ),
+                              const SizedBox(width: 8),
+                              OutlinedButton(
+                                onPressed: _elecAdvAvailablePaise > 0
+                                    ? () {
+                                        final maxAllowed = _elecAdvAvailablePaise < elecPaise ? _elecAdvAvailablePaise : elecPaise;
+                                        setState(() {
+                                          _elecAdvAppliedCtrl.text = CurrencyHelper.paiseToRupeesString(maxAllowed);
+                                        });
+                                      }
+                                    : null,
+                                child: const Text('Max'),
+                              ),
+                            ],
+                          ),
+                          const SizedBox(height: 6),
+                          Row(
+                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                            children: [
+                              Text(
+                                'Outstanding Elec: ${CurrencyHelper.formatPaise(outstandingElecPaise)}',
+                                style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w600),
+                              ),
+                              Text(
+                                'Remaining Advance: ${CurrencyHelper.formatPaise(remainingElecAdvPaise)}',
+                                style: const TextStyle(fontSize: 11, color: Colors.grey),
+                              ),
+                            ],
+                          ),
+                        ],
+                      ),
                     ),
                   ],
                 ),
@@ -441,68 +687,96 @@ class _GenerateBillScreenState extends ConsumerState<GenerateBillScreen> {
             ),
             const SizedBox(height: 16),
 
-            // Additional Charges
-            TextFormField(
-              controller: _additionalChargesCtrl,
-              keyboardType: TextInputType.number,
-              decoration: const InputDecoration(
-                labelText: 'Additional Charges (Maintenance, Water, etc.) (₹)',
-                border: OutlineInputBorder(),
-                prefixIcon: Icon(Icons.playlist_add),
-              ),
-              onChanged: (_) => setState(() {}),
-            ),
-            const SizedBox(height: 16),
-
-            // Due Date
-            ListTile(
-              contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(4),
-                side: BorderSide(color: Colors.grey.shade400),
-              ),
-              leading: const Icon(Icons.calendar_today),
-              title: const Text('Bill Due Date', style: TextStyle(fontSize: 12, color: Colors.grey)),
-              subtitle: Text(DateHelper.formatDate(_dueDate), style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
-              trailing: const Icon(Icons.arrow_drop_down),
-              onTap: () async {
-                final picked = await showDatePicker(
-                  context: context,
-                  initialDate: _dueDate,
-                  firstDate: DateTime.now(),
-                  lastDate: DateTime(2035),
-                );
-                if (picked != null) setState(() => _dueDate = picked);
-              },
-            ),
-            const SizedBox(height: 20),
-
-            // Grand Total Bill Summary Card
+            // 3. ADDITIONAL CHARGES & PREVIOUS BALANCE
             Card(
-              elevation: 0,
-              color: Colors.grey.shade50,
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(14),
-                side: BorderSide(color: Colors.grey.shade300),
-              ),
               child: Padding(
                 padding: const EdgeInsets.all(16),
                 child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    _buildSummaryRow('Gross Current Charges:', CurrencyHelper.formatPaise(totalCurrentGrossPaise)),
-                    if (_previousBalancePaise > 0)
-                      _buildSummaryRow('Previous Dues:', CurrencyHelper.formatPaise(_previousBalancePaise), color: AppColors.error),
+                    Text(
+                      '3. Additional Items & Due Date',
+                      style: Theme.of(context).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.bold),
+                    ),
+                    const Divider(height: 24),
+                    TextFormField(
+                      controller: _additionalChargesCtrl,
+                      keyboardType: TextInputType.number,
+                      decoration: const InputDecoration(
+                        labelText: 'Maintenance / Other Charges (₹)',
+                        prefixText: '₹ ',
+                        border: OutlineInputBorder(),
+                      ),
+                      onChanged: (_) => setState(() {}),
+                    ),
+                    const SizedBox(height: 12),
+                    if (_previousBalancePaise > 0) ...[
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        children: [
+                          const Text('Previous Outstanding Dues:', style: TextStyle(color: Colors.red)),
+                          Text(
+                            CurrencyHelper.formatPaise(_previousBalancePaise),
+                            style: const TextStyle(fontWeight: FontWeight.bold, color: Colors.red),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 12),
+                    ],
+                    ListTile(
+                      contentPadding: EdgeInsets.zero,
+                      title: const Text('Payment Due Date', style: TextStyle(fontSize: 14)),
+                      subtitle: Text(DateHelper.formatEpoch(_dueDate.millisecondsSinceEpoch)),
+                      trailing: const Icon(Icons.calendar_today, size: 20),
+                      onTap: () async {
+                        final picked = await showDatePicker(
+                          context: context,
+                          initialDate: _dueDate,
+                          firstDate: DateTime.now().subtract(const Duration(days: 30)),
+                          lastDate: DateTime.now().add(const Duration(days: 90)),
+                        );
+                        if (picked != null) setState(() => _dueDate = picked);
+                      },
+                    ),
+                  ],
+                ),
+              ),
+            ),
+            const SizedBox(height: 20),
+
+            // BILL SUMMARY CARD
+            Card(
+              color: AppColors.primaryContainer.withOpacity(0.2),
+              child: Padding(
+                padding: const EdgeInsets.all(16),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'Bill Summary',
+                      style: Theme.of(context).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.bold),
+                    ),
+                    const SizedBox(height: 12),
+                    _buildSummaryRow('Room Rent:', CurrencyHelper.formatPaise(rentPaise)),
                     if (rentAdvAppliedPaise > 0)
-                      _buildSummaryRow('Rent Advance Applied:', '- ${CurrencyHelper.formatPaise(rentAdvAppliedPaise)}', color: AppColors.primary),
+                      _buildSummaryRow('Rent Advance Applied:', '-${CurrencyHelper.formatPaise(rentAdvAppliedPaise)}', isGreen: true),
+                    _buildSummaryRow('Electricity Charge:', CurrencyHelper.formatPaise(elecPaise)),
                     if (elecAdvAppliedPaise > 0)
-                      _buildSummaryRow('Electricity Advance Applied:', '- ${CurrencyHelper.formatPaise(elecAdvAppliedPaise)}', color: Colors.amber.shade900),
-                    const Divider(height: 16),
-                    _buildSummaryRow(
-                      'Net Amount Due to Pay:',
-                      CurrencyHelper.formatPaise(netAmountDuePaise),
-                      isBold: true,
-                      color: netAmountDuePaise > 0 ? AppColors.error : AppColors.success,
-                      fontSize: 16,
+                      _buildSummaryRow('Electricity Advance Applied:', '-${CurrencyHelper.formatPaise(elecAdvAppliedPaise)}', isGreen: true),
+                    if (addPaise > 0)
+                      _buildSummaryRow('Other Charges:', CurrencyHelper.formatPaise(addPaise)),
+                    if (_previousBalancePaise > 0)
+                      _buildSummaryRow('Previous Dues:', CurrencyHelper.formatPaise(_previousBalancePaise)),
+                    const Divider(height: 20),
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        const Text('Net Payable by Tenant:', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
+                        Text(
+                          CurrencyHelper.formatPaise(netAmountDuePaise > 0 ? netAmountDuePaise : 0),
+                          style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 18, color: AppColors.primary),
+                        ),
+                      ],
                     ),
                   ],
                 ),
@@ -510,31 +784,35 @@ class _GenerateBillScreenState extends ConsumerState<GenerateBillScreen> {
             ),
             const SizedBox(height: 24),
 
+            // Confirm & Generate Button
             FilledButton.icon(
               onPressed: _isLoading ? null : _generateBill,
-              icon: _isLoading ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2)) : const Icon(Icons.receipt_long),
-              label: const Text('Confirm & Generate Bill'),
-              style: FilledButton.styleFrom(padding: const EdgeInsets.symmetric(vertical: 14)),
+              icon: _isLoading ? const SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white)) : const Icon(Icons.check),
+              label: Text(_isLoading ? 'Generating Bill...' : 'Confirm & Generate Bill'),
+              style: FilledButton.styleFrom(
+                minimumSize: const Size.fromHeight(50),
+              ),
             ),
+            const SizedBox(height: 32),
           ],
         ),
       ),
     );
   }
 
-  Widget _buildSummaryRow(String label, String value, {bool isBold = false, Color? color, double fontSize = 13}) {
+  Widget _buildSummaryRow(String label, String value, {bool isGreen = false}) {
     return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 2.5),
+      padding: const EdgeInsets.symmetric(vertical: 2),
       child: Row(
         mainAxisAlignment: MainAxisAlignment.spaceBetween,
         children: [
-          Text(label, style: TextStyle(fontSize: fontSize, color: Colors.grey.shade800)),
+          Text(label, style: const TextStyle(fontSize: 13)),
           Text(
             value,
             style: TextStyle(
-              fontSize: fontSize,
-              fontWeight: isBold ? FontWeight.bold : FontWeight.w600,
-              color: color ?? Colors.black87,
+              fontWeight: FontWeight.w600,
+              fontSize: 13,
+              color: isGreen ? Colors.green.shade700 : null,
             ),
           ),
         ],

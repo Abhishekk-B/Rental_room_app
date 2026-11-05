@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../core/constants/app_constants.dart';
 import '../../../core/utils/currency_helper.dart';
+import '../../../core/widgets/confirm_dialog.dart';
 import '../providers/rooms_provider.dart';
 
 class AddEditRoomScreen extends ConsumerStatefulWidget {
@@ -17,6 +18,7 @@ class _AddEditRoomScreenState extends ConsumerState<AddEditRoomScreen> {
   final _formKey = GlobalKey<FormState>();
   final _roomNumberCtrl = TextEditingController();
   final _rentCtrl = TextEditingController();
+  final _elecRateCtrl = TextEditingController(text: '10');
   final _descCtrl = TextEditingController();
   final _meterCtrl = TextEditingController();
   final _initialReadingCtrl = TextEditingController(text: '0');
@@ -38,6 +40,7 @@ class _AddEditRoomScreenState extends ConsumerState<AddEditRoomScreen> {
       setState(() {
         _roomNumberCtrl.text = room.roomNumber;
         _rentCtrl.text = CurrencyHelper.paiseToRupeesString(room.defaultRentPaise);
+        _elecRateCtrl.text = CurrencyHelper.paiseToRupeesString(room.electricityRatePaise);
         _descCtrl.text = room.description ?? '';
         _meterCtrl.text = room.meterNumber ?? '';
         _notesCtrl.text = room.notes ?? '';
@@ -50,6 +53,7 @@ class _AddEditRoomScreenState extends ConsumerState<AddEditRoomScreen> {
   void dispose() {
     _roomNumberCtrl.dispose();
     _rentCtrl.dispose();
+    _elecRateCtrl.dispose();
     _descCtrl.dispose();
     _meterCtrl.dispose();
     _initialReadingCtrl.dispose();
@@ -65,6 +69,7 @@ class _AddEditRoomScreenState extends ConsumerState<AddEditRoomScreen> {
     try {
       final dao = ref.read(roomDaoProvider);
       final rentPaise = CurrencyHelper.parseRupeesToPaise(_rentCtrl.text);
+      final elecRatePaise = CurrencyHelper.parseRupeesToPaise(_elecRateCtrl.text);
 
       if (widget.roomId == null) {
         // Create new room
@@ -76,6 +81,7 @@ class _AddEditRoomScreenState extends ConsumerState<AddEditRoomScreen> {
           roomNumber: _roomNumberCtrl.text,
           description: _descCtrl.text,
           defaultRentPaise: rentPaise,
+          electricityRatePaise: elecRatePaise > 0 ? elecRatePaise : 1000,
           meterNumber: _meterCtrl.text,
           initialMeterReadingCentiunits: initialCenti,
           notes: _notesCtrl.text,
@@ -87,8 +93,10 @@ class _AddEditRoomScreenState extends ConsumerState<AddEditRoomScreen> {
           roomNumber: _roomNumberCtrl.text,
           description: _descCtrl.text,
           defaultRentPaise: rentPaise,
+          electricityRatePaise: elecRatePaise > 0 ? elecRatePaise : 1000,
           isActive: _isActive,
           notes: _notesCtrl.text,
+          meterNumber: _meterCtrl.text,
         );
       }
 
@@ -108,6 +116,37 @@ class _AddEditRoomScreenState extends ConsumerState<AddEditRoomScreen> {
     }
   }
 
+  Future<void> _deleteRoom() async {
+    final confirmed = await showConfirmDialog(
+      context: context,
+      title: 'Delete Room',
+      message: 'Are you sure you want to delete this room? This will also remove any meters and records associated with this room.',
+      confirmLabel: 'Delete',
+      isDestructive: true,
+    );
+
+    if (confirmed == true && mounted) {
+      setState(() => _isLoading = true);
+      try {
+        await ref.read(roomDaoProvider).deleteRoom(widget.roomId!);
+        ref.invalidate(roomsListProvider);
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('Room deleted successfully')),
+          );
+          Navigator.pop(context); // Pop edit screen
+          Navigator.pop(context); // Pop room detail screen if open
+        }
+      } catch (e) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Error: $e')));
+        }
+      } finally {
+        if (mounted) setState(() => _isLoading = false);
+      }
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final isEditing = widget.roomId != null;
@@ -115,6 +154,14 @@ class _AddEditRoomScreenState extends ConsumerState<AddEditRoomScreen> {
     return Scaffold(
       appBar: AppBar(
         title: Text(isEditing ? 'Edit Room' : 'Add New Room'),
+        actions: [
+          if (isEditing)
+            IconButton(
+              icon: const Icon(Icons.delete_outline, color: Colors.red),
+              tooltip: 'Delete Room',
+              onPressed: _isLoading ? null : _deleteRoom,
+            ),
+        ],
       ),
       body: Form(
         key: _formKey,
@@ -125,54 +172,67 @@ class _AddEditRoomScreenState extends ConsumerState<AddEditRoomScreen> {
               controller: _roomNumberCtrl,
               decoration: const InputDecoration(
                 labelText: 'Room Name / Number *',
-                hintText: 'e.g. Room 104 or Deluxe 2nd Floor',
+                hintText: 'e.g. Room 101 or 1st Floor Deluxe',
                 border: OutlineInputBorder(),
                 prefixIcon: Icon(Icons.meeting_room_outlined),
               ),
               validator: (v) => (v == null || v.trim().isEmpty) ? 'Required' : null,
             ),
             const SizedBox(height: 16),
-            TextFormField(
-              controller: _rentCtrl,
-              keyboardType: TextInputType.number,
-              decoration: const InputDecoration(
-                labelText: 'Default Monthly Rent (₹) *',
-                hintText: 'e.g. 8500',
-                border: OutlineInputBorder(),
-                prefixIcon: Icon(Icons.currency_rupee),
-              ),
-              validator: (v) {
-                if (v == null || v.trim().isEmpty) return 'Required';
-                if (CurrencyHelper.parseRupeesToPaise(v) <= 0) return 'Enter a valid amount';
-                return null;
-              },
-            ),
-            const SizedBox(height: 16),
-            TextFormField(
-              controller: _descCtrl,
-              maxLines: 2,
-              decoration: const InputDecoration(
-                labelText: 'Description (Optional)',
-                hintText: 'Attached bath, private balcony, etc.',
-                border: OutlineInputBorder(),
-                prefixIcon: Icon(Icons.description_outlined),
-              ),
-            ),
-            const SizedBox(height: 16),
-            if (!isEditing) ...[
-              TextFormField(
-                controller: _meterCtrl,
-                decoration: const InputDecoration(
-                  labelText: 'Electricity Sub-Meter Number (Optional)',
-                  hintText: 'e.g. MTR-104',
-                  border: OutlineInputBorder(),
-                  prefixIcon: Icon(Icons.bolt_outlined),
+            Row(
+              children: [
+                Expanded(
+                  child: TextFormField(
+                    controller: _rentCtrl,
+                    keyboardType: TextInputType.number,
+                    decoration: const InputDecoration(
+                      labelText: 'Monthly Rent (₹) *',
+                      hintText: 'e.g. 5000',
+                      prefixText: '₹ ',
+                      border: OutlineInputBorder(),
+                    ),
+                    validator: (v) {
+                      if (v == null || v.trim().isEmpty) return 'Required';
+                      if (CurrencyHelper.parseRupeesToPaise(v) <= 0) return 'Enter valid amount';
+                      return null;
+                    },
+                  ),
                 ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: TextFormField(
+                    controller: _elecRateCtrl,
+                    keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                    decoration: const InputDecoration(
+                      labelText: 'Elec Rate / Unit *',
+                      hintText: 'e.g. 10.00',
+                      prefixText: '₹ ',
+                      border: OutlineInputBorder(),
+                    ),
+                    validator: (v) {
+                      if (v == null || v.trim().isEmpty) return 'Required';
+                      if (CurrencyHelper.parseRupeesToPaise(v) <= 0) return 'Enter valid rate';
+                      return null;
+                    },
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 16),
+            TextFormField(
+              controller: _meterCtrl,
+              decoration: const InputDecoration(
+                labelText: 'Electricity Sub-Meter Number (Optional)',
+                hintText: 'e.g. MTR-101',
+                border: OutlineInputBorder(),
+                prefixIcon: Icon(Icons.bolt_outlined),
               ),
+            ),
+            if (!isEditing) ...[
               const SizedBox(height: 16),
               TextFormField(
                 controller: _initialReadingCtrl,
-                keyboardType: TextInputType.number,
+                keyboardType: const TextInputType.numberWithOptions(decimal: true),
                 decoration: const InputDecoration(
                   labelText: 'Initial Meter Reading (Units)',
                   hintText: 'e.g. 1000.00',
@@ -180,8 +240,19 @@ class _AddEditRoomScreenState extends ConsumerState<AddEditRoomScreen> {
                   prefixIcon: Icon(Icons.speed_outlined),
                 ),
               ),
-              const SizedBox(height: 16),
             ],
+            const SizedBox(height: 16),
+            TextFormField(
+              controller: _descCtrl,
+              maxLines: 2,
+              decoration: const InputDecoration(
+                labelText: 'Description (Optional)',
+                hintText: 'Attached bathroom, ground floor, etc.',
+                border: OutlineInputBorder(),
+                prefixIcon: Icon(Icons.description_outlined),
+              ),
+            ),
+            const SizedBox(height: 16),
             TextFormField(
               controller: _notesCtrl,
               maxLines: 2,
@@ -195,7 +266,7 @@ class _AddEditRoomScreenState extends ConsumerState<AddEditRoomScreen> {
               const SizedBox(height: 12),
               SwitchListTile(
                 title: const Text('Active Room'),
-                subtitle: const Text('Deactivate if undergoing repair or unavailable for rent'),
+                subtitle: const Text('Deactivate if under maintenance or unavailable'),
                 value: _isActive,
                 onChanged: (val) => setState(() => _isActive = val),
               ),
@@ -203,10 +274,23 @@ class _AddEditRoomScreenState extends ConsumerState<AddEditRoomScreen> {
             const SizedBox(height: 24),
             FilledButton.icon(
               onPressed: _isLoading ? null : _save,
-              icon: _isLoading ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2)) : const Icon(Icons.save),
+              icon: _isLoading ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white)) : const Icon(Icons.save),
               label: Text(isEditing ? 'Save Changes' : 'Create Room'),
               style: FilledButton.styleFrom(padding: const EdgeInsets.symmetric(vertical: 14)),
             ),
+            if (isEditing) ...[
+              const SizedBox(height: 16),
+              OutlinedButton.icon(
+                onPressed: _isLoading ? null : _deleteRoom,
+                icon: const Icon(Icons.delete_outline, color: Colors.red),
+                label: const Text('Delete Room', style: TextStyle(color: Colors.red)),
+                style: OutlinedButton.styleFrom(
+                  side: const BorderSide(color: Colors.red),
+                  padding: const EdgeInsets.symmetric(vertical: 14),
+                ),
+              ),
+            ],
+            const SizedBox(height: 32),
           ],
         ),
       ),

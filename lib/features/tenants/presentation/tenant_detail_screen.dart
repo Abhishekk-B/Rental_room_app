@@ -30,6 +30,25 @@ class TenantDetailScreen extends ConsumerWidget {
             icon: const Icon(Icons.edit_outlined),
             onPressed: () => context.push('/tenants/$tenantId/edit'),
           ),
+          IconButton(
+            icon: const Icon(Icons.delete_outline, color: Colors.red),
+            tooltip: 'Delete Tenant',
+            onPressed: () async {
+              final confirmed = await showConfirmDialog(
+                context: context,
+                title: 'Delete Tenant',
+                message: 'Are you sure you want to delete this tenant and all associated records?',
+                confirmLabel: 'Delete',
+                isDestructive: true,
+              );
+              if (confirmed == true && context.mounted) {
+                await ref.read(tenantDaoProvider).deleteTenant(tenantId);
+                ref.invalidate(tenantsListProvider);
+                ref.invalidate(roomsListProvider);
+                Navigator.pop(context);
+              }
+            },
+          ),
         ],
       ),
       body: tenantAsync.when(

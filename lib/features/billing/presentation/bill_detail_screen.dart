@@ -2,10 +2,13 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import '../../../core/constants/app_colors.dart';
+import '../../../core/database/daos/billing_dao.dart';
 import '../../../core/services/pdf_invoice_service.dart';
 import '../../../core/utils/currency_helper.dart';
 import '../../../core/utils/date_helper.dart';
+import '../../../core/widgets/confirm_dialog.dart';
 import '../../../core/widgets/status_badge.dart';
+import '../../dashboard/providers/dashboard_provider.dart';
 import '../providers/billing_provider.dart';
 
 class BillDetailScreen extends ConsumerStatefulWidget {
@@ -20,7 +23,7 @@ class BillDetailScreen extends ConsumerStatefulWidget {
 class _BillDetailScreenState extends ConsumerState<BillDetailScreen> {
   bool _isExporting = false;
 
-  Future<void> _sharePdf(bill) async {
+  Future<void> _sharePdf(MonthlyBillRecord bill) async {
     setState(() => _isExporting = true);
     try {
       final pdfBytes = await PdfInvoiceService.generateMonthlyBillPdf(bill: bill);
@@ -34,6 +37,131 @@ class _BillDetailScreenState extends ConsumerState<BillDetailScreen> {
     }
   }
 
+  Future<void> _deleteBill() async {
+    final confirmed = await showConfirmDialog(
+      context: context,
+      title: 'Delete Bill',
+      message: 'Are you sure you want to delete this bill? Advance adjustments applied will be undone.',
+      confirmLabel: 'Delete',
+      isDestructive: true,
+    );
+
+    if (confirmed == true && mounted) {
+      try {
+        await ref.read(billingDaoProvider).deleteMonthlyBill(widget.billId);
+        ref.invalidate(billsListProvider);
+        ref.invalidate(dashboardSummaryProvider);
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Bill deleted successfully')));
+          Navigator.pop(context);
+        }
+      } catch (e) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Error: $e')));
+        }
+      }
+    }
+  }
+
+  void _showEditBillDialog(MonthlyBillRecord bill) {
+    final rentCtrl = TextEditingController(text: CurrencyHelper.paiseToRupeesString(bill.rentAmountPaise));
+    final elecCtrl = TextEditingController(text: CurrencyHelper.paiseToRupeesString(bill.electricityAmountPaise));
+    final addCtrl = TextEditingController(text: CurrencyHelper.paiseToRupeesString(bill.additionalChargesPaise));
+    final notesCtrl = TextEditingController(text: bill.notes ?? '');
+
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text('Edit Bill (${bill.billNumber})'),
+        content: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              TextFormField(
+                controller: rentCtrl,
+                keyboardType: TextInputType.number,
+                decoration: const InputDecoration(
+                  labelText: 'Rent Amount (₹)',
+                  prefixText: '₹ ',
+                  border: OutlineInputBorder(),
+                ),
+              ),
+              const SizedBox(height: 12),
+              TextFormField(
+                controller: elecCtrl,
+                keyboardType: TextInputType.number,
+                decoration: const InputDecoration(
+                  labelText: 'Electricity Amount (₹)',
+                  prefixText: '₹ ',
+                  border: OutlineInputBorder(),
+                ),
+              ),
+              const SizedBox(height: 12),
+              TextFormField(
+                controller: addCtrl,
+                keyboardType: TextInputType.number,
+                decoration: const InputDecoration(
+                  labelText: 'Other Charges (₹)',
+                  prefixText: '₹ ',
+                  border: OutlineInputBorder(),
+                ),
+              ),
+              const SizedBox(height: 12),
+              TextFormField(
+                controller: notesCtrl,
+                maxLines: 2,
+                decoration: const InputDecoration(
+                  labelText: 'Notes (Optional)',
+                  border: OutlineInputBorder(),
+                ),
+              ),
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () async {
+              final newRent = CurrencyHelper.parseRupeesToPaise(rentCtrl.text);
+              final newElec = CurrencyHelper.parseRupeesToPaise(elecCtrl.text);
+              final newAdd = CurrencyHelper.parseRupeesToPaise(addCtrl.text);
+
+              Navigator.pop(ctx);
+
+              try {
+                await ref.read(billingDaoProvider).updateMonthlyBill(
+                  billId: bill.id,
+                  rentAmountPaise: newRent,
+                  electricityAmountPaise: newElec,
+                  additionalChargesPaise: newAdd,
+                  notes: notesCtrl.text.trim(),
+                );
+
+                ref.invalidate(billDetailProvider(widget.billId));
+                ref.invalidate(billsListProvider);
+                ref.invalidate(dashboardSummaryProvider);
+
+                if (mounted) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(content: Text('Bill updated successfully')),
+                  );
+                }
+              } catch (e) {
+                if (mounted) {
+                  ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Error: $e')));
+                }
+              }
+            },
+            child: const Text('Save Changes'),
+          ),
+        ],
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final billAsync = ref.watch(billDetailProvider(widget.billId));
@@ -44,12 +172,26 @@ class _BillDetailScreenState extends ConsumerState<BillDetailScreen> {
         actions: [
           billAsync.maybeWhen(
             data: (bill) => bill != null
-                ? IconButton(
-                    icon: _isExporting
-                        ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2))
-                        : const Icon(Icons.share_outlined),
-                    tooltip: 'Share PDF Invoice',
-                    onPressed: () => _sharePdf(bill),
+                ? Row(
+                    children: [
+                      IconButton(
+                        icon: const Icon(Icons.edit_outlined),
+                        tooltip: 'Edit Bill Amount',
+                        onPressed: () => _showEditBillDialog(bill),
+                      ),
+                      IconButton(
+                        icon: _isExporting
+                            ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2))
+                            : const Icon(Icons.share_outlined),
+                        tooltip: 'Share PDF Invoice',
+                        onPressed: () => _sharePdf(bill),
+                      ),
+                      IconButton(
+                        icon: const Icon(Icons.delete_outline, color: Colors.red),
+                        tooltip: 'Delete Bill',
+                        onPressed: _deleteBill,
+                      ),
+                    ],
                   )
                 : const SizedBox.shrink(),
             orElse: () => const SizedBox.shrink(),
@@ -97,6 +239,10 @@ class _BillDetailScreenState extends ConsumerState<BillDetailScreen> {
                       _buildRow('Tenant Name:', bill.tenantName),
                       _buildRow('Bill Date:', DateHelper.formatEpoch(bill.billDateEpoch)),
                       _buildRow('Payment Due:', DateHelper.formatEpoch(bill.dueDateEpoch), isDue: true),
+                      if (bill.notes != null && bill.notes!.isNotEmpty) ...[
+                        const SizedBox(height: 4),
+                        _buildRow('Notes:', bill.notes!),
+                      ],
                     ],
                   ),
                 ),
@@ -104,11 +250,21 @@ class _BillDetailScreenState extends ConsumerState<BillDetailScreen> {
               const SizedBox(height: 16),
 
               // Line Items Breakdown
-              Text(
-                'ITEMIZED CHARGES',
-                style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13, color: Colors.grey.shade700),
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  Text(
+                    'ITEMIZED CHARGES',
+                    style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13, color: Colors.grey.shade700),
+                  ),
+                  TextButton.icon(
+                    onPressed: () => _showEditBillDialog(bill),
+                    icon: const Icon(Icons.edit, size: 16),
+                    label: const Text('Edit Amounts', style: TextStyle(fontSize: 12)),
+                  ),
+                ],
               ),
-              const SizedBox(height: 8),
+              const SizedBox(height: 4),
               Card(
                 elevation: 0,
                 shape: RoundedRectangleBorder(
@@ -127,7 +283,11 @@ class _BillDetailScreenState extends ConsumerState<BillDetailScreen> {
                       subtitle: Text(item.category, style: const TextStyle(fontSize: 11, color: Colors.grey)),
                       trailing: Text(
                         CurrencyHelper.formatPaise(item.amountPaise, showDecimals: true),
-                        style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 14),
+                        style: TextStyle(
+                          fontWeight: FontWeight.w600,
+                          fontSize: 14,
+                          color: item.amountPaise < 0 ? Colors.green.shade700 : null,
+                        ),
                       ),
                     );
                   },
@@ -152,7 +312,20 @@ class _BillDetailScreenState extends ConsumerState<BillDetailScreen> {
                             color: AppColors.error),
                         const SizedBox(height: 4),
                       ],
-                      _buildTotalRow('Total Amount Due:', CurrencyHelper.formatPaise(bill.totalDuePaise),
+                      _buildTotalRow('Gross Bill Amount:', CurrencyHelper.formatPaise(bill.totalDuePaise),
+                          isBold: true, fontSize: 14),
+                      if (bill.rentAdvanceAppliedPaise > 0) ...[
+                        const SizedBox(height: 4),
+                        _buildTotalRow('Rent Advance Applied:', '-${CurrencyHelper.formatPaise(bill.rentAdvanceAppliedPaise)}',
+                            color: Colors.green.shade700),
+                      ],
+                      if (bill.electricityAdvanceAppliedPaise > 0) ...[
+                        const SizedBox(height: 4),
+                        _buildTotalRow('Elec Advance Applied:', '-${CurrencyHelper.formatPaise(bill.electricityAdvanceAppliedPaise)}',
+                            color: Colors.green.shade700),
+                      ],
+                      const Divider(height: 14),
+                      _buildTotalRow('Net Amount Due:', CurrencyHelper.formatPaise(bill.netAmountDuePaise),
                           isBold: true, fontSize: 15),
                       if (bill.amountPaidPaise > 0) ...[
                         const SizedBox(height: 4),

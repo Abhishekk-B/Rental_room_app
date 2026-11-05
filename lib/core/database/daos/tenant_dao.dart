@@ -253,6 +253,7 @@ class TenantDao {
     required int moveInDateEpoch,
     required int agreedRentPaise,
     required int securityDepositPaise,
+    int billingDueDay = 5,
   }) async {
     final db = await _dbProvider.database;
 
@@ -286,6 +287,7 @@ class TenantDao {
         'move_out_date_epoch': null,
         'agreed_rent_paise': agreedRentPaise,
         'security_deposit_paise': securityDepositPaise,
+        'billing_due_day': billingDueDay,
         'status': 'ACTIVE',
         'created_at_epoch': DateTime.now().millisecondsSinceEpoch,
       });
@@ -307,5 +309,33 @@ class TenantDao {
       where: 'id = ?',
       whereArgs: [tenancyId],
     );
+  }
+
+  /// Safely deletes a tenant and related records
+  Future<void> deleteTenant(String tenantId) async {
+    final db = await _dbProvider.database;
+    await db.transaction((txn) async {
+      final tenancies = await txn.query(
+        DatabaseTables.tenancies,
+        where: 'tenant_id = ?',
+        whereArgs: [tenantId],
+      );
+      for (final t in tenancies) {
+        final tid = t['id'] as String;
+        await txn.delete(DatabaseTables.advanceLedgerEntries, where: 'tenancy_id = ?', whereArgs: [tid]);
+        final payments = await txn.query(DatabaseTables.payments, where: 'tenancy_id = ?', whereArgs: [tid]);
+        for (final p in payments) {
+          await txn.delete(DatabaseTables.paymentAllocations, where: 'payment_id = ?', whereArgs: [p['id']]);
+        }
+        await txn.delete(DatabaseTables.payments, where: 'tenancy_id = ?', whereArgs: [tid]);
+        final bills = await txn.query(DatabaseTables.monthlyBills, where: 'tenancy_id = ?', whereArgs: [tid]);
+        for (final b in bills) {
+          await txn.delete(DatabaseTables.billLineItems, where: 'monthly_bill_id = ?', whereArgs: [b['id']]);
+        }
+        await txn.delete(DatabaseTables.monthlyBills, where: 'tenancy_id = ?', whereArgs: [tid]);
+        await txn.delete(DatabaseTables.tenancies, where: 'id = ?', whereArgs: [tid]);
+      }
+      await txn.delete(DatabaseTables.tenants, where: 'id = ?', whereArgs: [tenantId]);
+    });
   }
 }

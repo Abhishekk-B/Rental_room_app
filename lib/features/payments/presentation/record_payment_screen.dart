@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import '../../../core/constants/app_colors.dart';
 import '../../../core/utils/currency_helper.dart';
 import '../../../core/utils/date_helper.dart';
 import '../../billing/providers/billing_provider.dart';
@@ -26,7 +27,9 @@ class RecordPaymentScreen extends ConsumerStatefulWidget {
 class _RecordPaymentScreenState extends ConsumerState<RecordPaymentScreen> {
   final _formKey = GlobalKey<FormState>();
   String? _selectedTenancyId;
-  final _amountCtrl = TextEditingController();
+  final _rentAmountCtrl = TextEditingController(text: '0');
+  final _elecAmountCtrl = TextEditingController(text: '0');
+  final _totalAmountCtrl = TextEditingController(text: '0');
   final _refCtrl = TextEditingController();
   final _notesCtrl = TextEditingController();
   String _paymentMethod = 'UPI';
@@ -40,17 +43,28 @@ class _RecordPaymentScreenState extends ConsumerState<RecordPaymentScreen> {
     if (widget.prefilledAmountPaise != null) {
       final paise = int.tryParse(widget.prefilledAmountPaise!) ?? 0;
       if (paise > 0) {
-        _amountCtrl.text = CurrencyHelper.paiseToRupeesString(paise);
+        _rentAmountCtrl.text = CurrencyHelper.paiseToRupeesString(paise);
+        _totalAmountCtrl.text = CurrencyHelper.paiseToRupeesString(paise);
       }
     }
   }
 
   @override
   void dispose() {
-    _amountCtrl.dispose();
+    _rentAmountCtrl.dispose();
+    _elecAmountCtrl.dispose();
+    _totalAmountCtrl.dispose();
     _refCtrl.dispose();
     _notesCtrl.dispose();
     super.dispose();
+  }
+
+  void _syncTotalFromCategories() {
+    final rentPaise = CurrencyHelper.parseRupeesToPaise(_rentAmountCtrl.text);
+    final elecPaise = CurrencyHelper.parseRupeesToPaise(_elecAmountCtrl.text);
+    final total = rentPaise + elecPaise;
+    _totalAmountCtrl.text = CurrencyHelper.paiseToRupeesString(total);
+    setState(() {});
   }
 
   Future<void> _record() async {
@@ -62,14 +76,29 @@ class _RecordPaymentScreenState extends ConsumerState<RecordPaymentScreen> {
       return;
     }
 
+    final rentPaise = CurrencyHelper.parseRupeesToPaise(_rentAmountCtrl.text);
+    final elecPaise = CurrencyHelper.parseRupeesToPaise(_elecAmountCtrl.text);
+    int totalPaise = CurrencyHelper.parseRupeesToPaise(_totalAmountCtrl.text);
+
+    if (totalPaise <= 0) {
+      totalPaise = rentPaise + elecPaise;
+    }
+
+    if (totalPaise <= 0) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Payment amount must be greater than ₹0.')),
+      );
+      return;
+    }
+
     setState(() => _isLoading = true);
 
     try {
-      final amountPaise = CurrencyHelper.parseRupeesToPaise(_amountCtrl.text);
-
       final receipt = await ref.read(paymentDaoProvider).recordPayment(
         tenancyId: _selectedTenancyId!,
-        amountPaise: amountPaise,
+        amountPaise: totalPaise,
+        rentAmountPaidPaise: rentPaise,
+        electricityAmountPaidPaise: elecPaise,
         paymentDateEpoch: _paymentDate.millisecondsSinceEpoch,
         paymentMethod: _paymentMethod,
         transactionRef: _refCtrl.text,
@@ -133,19 +162,119 @@ class _RecordPaymentScreenState extends ConsumerState<RecordPaymentScreen> {
               loading: () => const LinearProgressIndicator(),
               error: (e, _) => Text('Error: $e'),
             ),
-            const SizedBox(height: 16),
+            const SizedBox(height: 20),
 
-            // Amount Received
-            TextFormField(
-              controller: _amountCtrl,
-              keyboardType: TextInputType.number,
-              decoration: const InputDecoration(
-                labelText: 'Amount Received (₹) *',
-                hintText: 'e.g. 8500',
-                border: OutlineInputBorder(),
-                prefixIcon: Icon(Icons.currency_rupee),
+            // Separate Rent & Electricity Payments Card
+            Card(
+              child: Padding(
+                padding: const EdgeInsets.all(16),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'Payment Category Breakdown',
+                      style: Theme.of(context).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.bold),
+                    ),
+                    const SizedBox(height: 4),
+                    const Text(
+                      'Enter amounts for rent and/or electricity. Use "Reset to 0" to quickly clear either field.',
+                      style: TextStyle(fontSize: 12, color: Colors.grey),
+                    ),
+                    const Divider(height: 24),
+
+                    // 1. Rent Amount
+                    Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Expanded(
+                          child: TextFormField(
+                            controller: _rentAmountCtrl,
+                            keyboardType: TextInputType.number,
+                            decoration: const InputDecoration(
+                              labelText: 'Room Rent Amount (₹)',
+                              prefixText: '₹ ',
+                              border: OutlineInputBorder(),
+                              prefixIcon: Icon(Icons.home_outlined),
+                            ),
+                            onChanged: (_) => _syncTotalFromCategories(),
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        Padding(
+                          padding: const EdgeInsets.only(top: 4),
+                          child: OutlinedButton(
+                            onPressed: () {
+                              _rentAmountCtrl.text = '0';
+                              _syncTotalFromCategories();
+                            },
+                            style: OutlinedButton.styleFrom(
+                              foregroundColor: Colors.red.shade700,
+                              side: BorderSide(color: Colors.red.shade300),
+                            ),
+                            child: const Text('Reset to 0'),
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 16),
+
+                    // 2. Electricity Amount
+                    Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Expanded(
+                          child: TextFormField(
+                            controller: _elecAmountCtrl,
+                            keyboardType: TextInputType.number,
+                            decoration: const InputDecoration(
+                              labelText: 'Electricity Bill Amount (₹)',
+                              prefixText: '₹ ',
+                              border: OutlineInputBorder(),
+                              prefixIcon: Icon(Icons.bolt_outlined),
+                            ),
+                            onChanged: (_) => _syncTotalFromCategories(),
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        Padding(
+                          padding: const EdgeInsets.only(top: 4),
+                          child: OutlinedButton(
+                            onPressed: () {
+                              _elecAmountCtrl.text = '0';
+                              _syncTotalFromCategories();
+                            },
+                            style: OutlinedButton.styleFrom(
+                              foregroundColor: Colors.red.shade700,
+                              side: BorderSide(color: Colors.red.shade300),
+                            ),
+                            child: const Text('Reset to 0'),
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 16),
+
+                    // Total Payment Summary Banner
+                    Container(
+                      padding: const EdgeInsets.all(12),
+                      decoration: BoxDecoration(
+                        color: AppColors.primaryContainer.withOpacity(0.3),
+                        borderRadius: BorderRadius.circular(8),
+                      ),
+                      child: Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        children: [
+                          const Text('Total Payment Received:', style: TextStyle(fontWeight: FontWeight.w600)),
+                          Text(
+                            '₹ ${_totalAmountCtrl.text}',
+                            style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 18, color: AppColors.primary),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
               ),
-              validator: (v) => (v == null || CurrencyHelper.parseRupeesToPaise(v) <= 0) ? 'Required' : null,
             ),
             const SizedBox(height: 16),
 
@@ -218,10 +347,13 @@ class _RecordPaymentScreenState extends ConsumerState<RecordPaymentScreen> {
 
             FilledButton.icon(
               onPressed: _isLoading ? null : _record,
-              icon: _isLoading ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2)) : const Icon(Icons.check),
+              icon: _isLoading ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white)) : const Icon(Icons.check),
               label: const Text('Record & Generate Receipt'),
-              style: FilledButton.styleFrom(padding: const EdgeInsets.symmetric(vertical: 14)),
+              style: FilledButton.styleFrom(
+                minimumSize: const Size.fromHeight(50),
+              ),
             ),
+            const SizedBox(height: 32),
           ],
         ),
       ),

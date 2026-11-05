@@ -303,4 +303,136 @@ class BillingDao {
       }
     });
   }
+
+  Future<void> updateMonthlyBill({
+    required String billId,
+    required int rentAmountPaise,
+    required int electricityAmountPaise,
+    required int additionalChargesPaise,
+    int? electricityUnitsCentiunits,
+    String? notes,
+  }) async {
+    final db = await _dbProvider.database;
+    final now = DateTime.now().millisecondsSinceEpoch;
+
+    await db.transaction((txn) async {
+      final billRows = await txn.query(
+        DatabaseTables.monthlyBills,
+        where: 'id = ?',
+        whereArgs: [billId],
+      );
+      if (billRows.isEmpty) throw Exception('Bill not found');
+      final b = billRows.first;
+      final rentAdvApplied = b['rent_advance_applied_paise'] as int;
+      final elecAdvApplied = b['electricity_advance_applied_paise'] as int;
+      final prevBalance = b['previous_balance_paise'] as int;
+      final amountPaid = b['amount_paid_paise'] as int;
+      final dueDate = b['due_date_epoch'] as int;
+
+      final grossTotal = rentAmountPaise + electricityAmountPaise + additionalChargesPaise + prevBalance;
+      final totalAdvances = rentAdvApplied + elecAdvApplied;
+      final netDue = (grossTotal - totalAdvances) > 0 ? (grossTotal - totalAdvances) : 0;
+      final remainingBalance = (netDue - amountPaid) > 0 ? (netDue - amountPaid) : 0;
+
+      final status = BillingEngine.determineBillStatus(
+        totalDuePaise: netDue,
+        amountPaidPaise: amountPaid,
+        remainingBalancePaise: remainingBalance,
+        dueDateEpoch: dueDate,
+        currentEpoch: now,
+      );
+
+      final outRent = (rentAmountPaise - rentAdvApplied) > 0 ? (rentAmountPaise - rentAdvApplied) : 0;
+      final outElec = (electricityAmountPaise - elecAdvApplied) > 0 ? (electricityAmountPaise - elecAdvApplied) : 0;
+
+      await txn.update(
+        DatabaseTables.monthlyBills,
+        {
+          'rent_amount_paise': rentAmountPaise,
+          'electricity_amount_paise': electricityAmountPaise,
+          if (electricityUnitsCentiunits != null) 'electricity_units_centiunits': electricityUnitsCentiunits,
+          'additional_charges_paise': additionalChargesPaise,
+          'outstanding_rent_paise': outRent,
+          'outstanding_electricity_paise': outElec,
+          'total_due_paise': grossTotal,
+          'net_amount_due_paise': netDue,
+          'remaining_balance_paise': remainingBalance,
+          'status': status,
+          if (notes != null) 'notes': notes,
+        },
+        where: 'id = ?',
+        whereArgs: [billId],
+      );
+
+      await txn.delete(DatabaseTables.billLineItems, where: 'monthly_bill_id = ?', whereArgs: [billId]);
+      await txn.insert(DatabaseTables.billLineItems, {
+        'id': 'item_${billId}_rent',
+        'monthly_bill_id': billId,
+        'description': 'Monthly Room Rent',
+        'category': 'RENT',
+        'amount_paise': rentAmountPaise,
+        'created_at_epoch': now,
+      });
+      if (rentAdvApplied > 0) {
+        await txn.insert(DatabaseTables.billLineItems, {
+          'id': 'item_${billId}_rent_adv',
+          'monthly_bill_id': billId,
+          'description': 'Rent Advance Deduction',
+          'category': 'ADVANCE_ADJUSTMENT',
+          'amount_paise': -rentAdvApplied,
+          'created_at_epoch': now,
+        });
+      }
+      if (electricityAmountPaise > 0) {
+        await txn.insert(DatabaseTables.billLineItems, {
+          'id': 'item_${billId}_elec',
+          'monthly_bill_id': billId,
+          'description': 'Electricity Charges',
+          'category': 'ELECTRICITY',
+          'amount_paise': electricityAmountPaise,
+          'created_at_epoch': now,
+        });
+      }
+      if (elecAdvApplied > 0) {
+        await txn.insert(DatabaseTables.billLineItems, {
+          'id': 'item_${billId}_elec_adv',
+          'monthly_bill_id': billId,
+          'description': 'Electricity Advance Deduction',
+          'category': 'ADVANCE_ADJUSTMENT',
+          'amount_paise': -elecAdvApplied,
+          'created_at_epoch': now,
+        });
+      }
+      if (additionalChargesPaise > 0) {
+        await txn.insert(DatabaseTables.billLineItems, {
+          'id': 'item_${billId}_add',
+          'monthly_bill_id': billId,
+          'description': 'Additional / Maintenance Charges',
+          'category': 'OTHER',
+          'amount_paise': additionalChargesPaise,
+          'created_at_epoch': now,
+        });
+      }
+      if (prevBalance > 0) {
+        await txn.insert(DatabaseTables.billLineItems, {
+          'id': 'item_${billId}_prev',
+          'monthly_bill_id': billId,
+          'description': 'Previous Outstanding Dues',
+          'category': 'OTHER',
+          'amount_paise': prevBalance,
+          'created_at_epoch': now,
+        });
+      }
+    });
+  }
+
+  Future<void> deleteMonthlyBill(String billId) async {
+    final db = await _dbProvider.database;
+    await db.transaction((txn) async {
+      await txn.delete(DatabaseTables.billLineItems, where: 'monthly_bill_id = ?', whereArgs: [billId]);
+      await txn.delete(DatabaseTables.advanceLedgerEntries, where: 'monthly_bill_id = ?', whereArgs: [billId]);
+      await txn.delete(DatabaseTables.paymentAllocations, where: 'monthly_bill_id = ?', whereArgs: [billId]);
+      await txn.delete(DatabaseTables.monthlyBills, where: 'id = ?', whereArgs: [billId]);
+    });
+  }
 }

@@ -37,6 +37,7 @@ class DatabaseTables {
       room_number TEXT NOT NULL UNIQUE,
       description TEXT,
       default_rent_paise INTEGER NOT NULL DEFAULT 0,
+      electricity_rate_paise INTEGER NOT NULL DEFAULT 1000,
       is_active INTEGER NOT NULL DEFAULT 1,
       notes TEXT,
       created_at_epoch INTEGER NOT NULL,
@@ -71,6 +72,7 @@ class DatabaseTables {
       move_out_date_epoch INTEGER,
       agreed_rent_paise INTEGER NOT NULL,
       security_deposit_paise INTEGER NOT NULL DEFAULT 0,
+      billing_due_day INTEGER NOT NULL DEFAULT 5,
       status TEXT NOT NULL DEFAULT 'ACTIVE', -- 'ACTIVE', 'TERMINATED'
       created_at_epoch INTEGER NOT NULL,
       FOREIGN KEY (tenant_id) REFERENCES $tenants (id),

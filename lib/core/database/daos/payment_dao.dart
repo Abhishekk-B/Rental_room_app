@@ -46,10 +46,21 @@ class PaymentRecord {
 class PaymentDao {
   final AppDatabase _dbProvider = AppDatabase.instance;
 
-  Future<List<PaymentRecord>> getPayments({String? tenancyId}) async {
+  Future<List<PaymentRecord>> getPayments({String? tenancyId, String? roomId}) async {
     final db = await _dbProvider.database;
-    final where = tenancyId != null ? 'WHERE p.tenancy_id = ?' : '';
-    final args = tenancyId != null ? [tenancyId] : null;
+    final whereClauses = <String>[];
+    final args = <dynamic>[];
+
+    if (tenancyId != null) {
+      whereClauses.add('p.tenancy_id = ?');
+      args.add(tenancyId);
+    }
+    if (roomId != null) {
+      whereClauses.add('t.room_id = ?');
+      args.add(roomId);
+    }
+
+    final whereSql = whereClauses.isNotEmpty ? 'WHERE ${whereClauses.join(' AND ')}' : '';
 
     final query = '''
       SELECT 
@@ -60,18 +71,20 @@ class PaymentDao {
       JOIN ${DatabaseTables.tenancies} t ON p.tenancy_id = t.id
       JOIN ${DatabaseTables.tenants} ten ON t.tenant_id = ten.id
       JOIN ${DatabaseTables.rooms} r ON t.room_id = r.id
-      $where
+      $whereSql
       ORDER BY p.payment_date_epoch DESC;
     ''';
 
-    final result = await db.rawQuery(query, args);
+    final result = await db.rawQuery(query, args.isNotEmpty ? args : null);
     return result.map((row) => PaymentRecord.fromMap(row)).toList();
   }
 
-  /// Records a payment and automatically allocates it to the oldest unpaid bills for this tenancy
+  /// Records a payment with separate rent vs electricity amounts and allocates to bills
   Future<String> recordPayment({
     required String tenancyId,
     required int amountPaise,
+    int? rentAmountPaidPaise,
+    int? electricityAmountPaidPaise,
     required int paymentDateEpoch,
     required String paymentMethod,
     String? transactionRef,
@@ -115,21 +128,36 @@ class PaymentDao {
         );
       }
 
-      int unallocatedPaise = amountPaise;
+      int unallocatedTotal = amountPaise;
+      int unallocatedRent = rentAmountPaidPaise ?? 0;
+      int unallocatedElec = electricityAmountPaidPaise ?? 0;
 
       for (final bill in eligibleBills) {
-        if (unallocatedPaise <= 0) break;
+        if (unallocatedTotal <= 0) break;
 
         final billId = bill['id'] as String;
         final currentRemaining = bill['remaining_balance_paise'] as int;
         final currentPaid = bill['amount_paid_paise'] as int;
-        final totalDue = bill['total_due_paise'] as int;
         final dueDate = bill['due_date_epoch'] as int;
+        int outRent = (bill['outstanding_rent_paise'] as int?) ?? 0;
+        int outElec = (bill['outstanding_electricity_paise'] as int?) ?? 0;
 
-        final int allocateToThis = unallocatedPaise >= currentRemaining ? currentRemaining : unallocatedPaise;
+        final int allocateToThis = unallocatedTotal >= currentRemaining ? currentRemaining : unallocatedTotal;
         final int newPaid = currentPaid + allocateToThis;
         final int newRemaining = currentRemaining - allocateToThis;
-        unallocatedPaise -= allocateToThis;
+        unallocatedTotal -= allocateToThis;
+
+        // Reduce category outstanding if specified
+        if (unallocatedRent > 0 && outRent > 0) {
+          final deduct = unallocatedRent >= outRent ? outRent : unallocatedRent;
+          outRent -= deduct;
+          unallocatedRent -= deduct;
+        }
+        if (unallocatedElec > 0 && outElec > 0) {
+          final deduct = unallocatedElec >= outElec ? outElec : unallocatedElec;
+          outElec -= deduct;
+          unallocatedElec -= deduct;
+        }
 
         // Record payment allocation
         await txn.insert(DatabaseTables.paymentAllocations, {
@@ -154,6 +182,8 @@ class PaymentDao {
           {
             'amount_paid_paise': newPaid,
             'remaining_balance_paise': newRemaining,
+            'outstanding_rent_paise': outRent,
+            'outstanding_electricity_paise': outElec,
             'status': newStatus,
           },
           where: 'id = ?',
