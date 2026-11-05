@@ -44,7 +44,7 @@ void main() {
           previousReadingCentiunits: 50000,
           currentReadingCentiunits: 48000,
         ),
-        throwsA(isA<Exception>()),
+        throwsArgumentError,
       );
     });
 
