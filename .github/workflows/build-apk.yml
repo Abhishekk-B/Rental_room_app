@@ -31,16 +31,13 @@ jobs:
         run: flutter pub get
 
       - name: Run Unit & Calculation Tests
-        run: |
-          flutter test test/unit_calculations_test.dart
-          flutter test test/advance_accounts_test.dart
-          flutter test test/backup_manifest_test.dart
+        run: flutter test
 
       - name: Build Debug APK
         run: flutter build apk --debug
 
       - name: Build Release APK
-        run: flutter build apk --release
+        run: flutter build apk --release --no-shrink
 
       - name: Upload Debug APK
         uses: actions/upload-artifact@v4

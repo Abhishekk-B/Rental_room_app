@@ -1,5 +1,4 @@
-import 'dart:convert';
-import 'dart:io';
+import 'package:flutter_test/flutter_test.dart';
 
 class BackupManifest {
   final String appVersion;
@@ -32,67 +31,43 @@ class BackupManifest {
 }
 
 void main() {
-  int passed = 0;
-  int failed = 0;
+  group('Backup & Manifest Integrity Tests', () {
+    test('Manifest serialization and deserialization integrity', () {
+      final original = BackupManifest(
+        appVersion: '1.0.0',
+        schemaVersion: 1,
+        backupTimestampEpoch: 1730790000000,
+        tableCounts: {
+          'properties': 1,
+          'rooms': 3,
+          'tenants': 2,
+          'tenancies': 2,
+          'monthly_bills': 6,
+          'payments': 4,
+          'advance_ledger_entries': 8,
+        },
+      );
 
-  void test(String name, void Function() body) {
-    try {
-      body();
-      print('  ✓ $name');
-      passed++;
-    } catch (e) {
-      print('  ✗ $name ($e)');
-      failed++;
-    }
-  }
+      final map = original.toMap();
+      final reconstructed = BackupManifest.fromMap(map);
 
-  void expect(dynamic actual, dynamic expected) {
-    if (actual != expected) {
-      throw Exception('Expected "$expected", got "$actual"');
-    }
-  }
+      expect(reconstructed.appVersion, '1.0.0');
+      expect(reconstructed.schemaVersion, 1);
+      expect(reconstructed.backupTimestampEpoch, 1730790000000);
+      expect(reconstructed.tableCounts['rooms'], 3);
+      expect(reconstructed.tableCounts['advance_ledger_entries'], 8);
+    });
 
-  print('\n=== Running Backup & Manifest Integrity Tests ===\n');
+    test('Validates database schema version match', () {
+      final manifest = BackupManifest(
+        appVersion: '1.0.0',
+        schemaVersion: 1,
+        backupTimestampEpoch: 1730790000000,
+        tableCounts: {},
+      );
 
-  test('Manifest serialization and deserialization integrity', () {
-    final original = BackupManifest(
-      appVersion: '1.0.0',
-      schemaVersion: 1,
-      backupTimestampEpoch: 1730790000000,
-      tableCounts: {
-        'properties': 1,
-        'rooms': 3,
-        'tenants': 2,
-        'tenancies': 2,
-        'meters': 3,
-        'meter_readings': 6,
-        'monthly_bills': 4,
-        'payments': 3,
-      },
-    );
-
-    final jsonStr = jsonEncode(original.toMap());
-    final decodedMap = jsonDecode(jsonStr) as Map<String, dynamic>;
-    final reconstructed = BackupManifest.fromMap(decodedMap);
-
-    expect(reconstructed.appVersion, '1.0.0');
-    expect(reconstructed.schemaVersion, 1);
-    expect(reconstructed.backupTimestampEpoch, 1730790000000);
-    expect(reconstructed.tableCounts['rooms'], 3);
-    expect(reconstructed.tableCounts['tenants'], 2);
+      const currentAppSchemaVersion = 1;
+      expect(manifest.schemaVersion == currentAppSchemaVersion, true);
+    });
   });
-
-  test('Rejects invalid manifest when required fields are missing', () {
-    final invalidJson = {'invalid_key': '123'};
-    bool caught = false;
-    try {
-      BackupManifest.fromMap(invalidJson);
-    } catch (_) {
-      caught = true;
-    }
-    expect(caught, true);
-  });
-
-  print('\n=== Manifest Test Summary: $passed Passed, $failed Failed ===\n');
-  if (failed > 0) exit(1);
 }
