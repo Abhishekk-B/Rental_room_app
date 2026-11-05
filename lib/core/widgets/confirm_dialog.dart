@@ -62,3 +62,21 @@ class ConfirmDialog extends StatelessWidget {
     );
   }
 }
+
+Future<bool> showConfirmDialog({
+  required BuildContext context,
+  required String title,
+  required String message,
+  String confirmLabel = 'Confirm',
+  String cancelLabel = 'Cancel',
+  bool isDestructive = false,
+}) {
+  return ConfirmDialog.show(
+    context,
+    title: title,
+    content: message,
+    confirmText: confirmLabel,
+    cancelText: cancelLabel,
+    isDestructive: isDestructive,
+  );
+}

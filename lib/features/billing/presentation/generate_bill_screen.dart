@@ -206,9 +206,11 @@ class _GenerateBillScreenState extends ConsumerState<GenerateBillScreen> {
         final newReadingCenti = CurrencyHelper.parseReadingToCentiunits(newReadingText);
         if (newReadingCenti >= _previousReadingCentiunits) {
           await ref.read(electricityDaoProvider).recordMeterReading(
+            id: 'mr_${_selectedRoom!.meterId}_${period.year}_${period.month}',
             meterId: _selectedRoom!.meterId!,
             billingMonth: period.month,
             billingYear: period.year,
+            readingDateEpoch: DateTime.now().millisecondsSinceEpoch,
             currentReadingCentiunits: newReadingCenti,
             previousReadingCentiunits: _previousReadingCentiunits,
             notes: 'Recorded during bill generation (${calculated.billNumber})',
