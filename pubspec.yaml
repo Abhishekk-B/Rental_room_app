@@ -1,0 +1,50 @@
+name: rental_room_app
+description: "Offline, local-first Android application for rental room and tenant management."
+publish_to: 'none'
+version: 1.0.0+1
+
+environment:
+  sdk: '>=3.0.0 <4.0.0'
+  flutter: ">=3.10.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+
+  # Local Persistence & SQLite
+  sqflite: ^2.3.2
+  path_provider: ^2.1.2
+  path: ^1.9.0
+
+  # State Management
+  flutter_riverpod: ^2.5.1
+
+  # Navigation
+  go_router: ^14.0.0
+
+  # UI & Styling
+  intl: ^0.19.0
+
+  # Document Generation & Sharing
+  pdf: ^3.10.8
+  printing: ^5.12.0
+  share_plus: ^9.0.0
+
+  # Attachments & Storage
+  image_picker: ^1.1.0
+  file_picker: ^8.0.0
+  archive: ^3.5.0
+  crypto: ^3.0.3
+
+  # Local Security
+  flutter_secure_storage: ^9.2.1
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^3.0.0
+
+flutter:
+  uses-material-design: true
+  assets:
+    - assets/
