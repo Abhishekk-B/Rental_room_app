@@ -281,7 +281,10 @@ final appRouter = GoRouter(
         return RecordPaymentScreen(
           preselectedTenancyId: state.uri.queryParameters['tenancyId'],
           preselectedBillId: state.uri.queryParameters['billId'],
+          prefilledRentAmountPaise: state.uri.queryParameters['rentAmount'],
+          prefilledElecAmountPaise: state.uri.queryParameters['elecAmount'],
           prefilledAmountPaise: state.uri.queryParameters['amount'],
+          preselectedRoomId: state.uri.queryParameters['roomId'],
         );
       },
     ),

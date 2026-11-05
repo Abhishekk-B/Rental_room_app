@@ -8,12 +8,20 @@ import '../../../core/widgets/confirm_dialog.dart';
 import '../../../core/widgets/status_badge.dart';
 import '../providers/rooms_provider.dart';
 
-class RoomDetailScreen extends ConsumerWidget {
+class RoomDetailScreen extends ConsumerStatefulWidget {
   final String roomId;
 
   const RoomDetailScreen({Key? key, required this.roomId}) : super(key: key);
 
-  Future<void> _deleteRoom(BuildContext context, WidgetRef ref) async {
+  @override
+  ConsumerState<RoomDetailScreen> createState() => _RoomDetailScreenState();
+}
+
+class _RoomDetailScreenState extends ConsumerState<RoomDetailScreen> {
+  int? _filterMonth;
+  int? _filterYear;
+
+  Future<void> _deleteRoom(BuildContext context) async {
     final confirmed = await showConfirmDialog(
       context: context,
       title: 'Delete Room',
@@ -24,7 +32,7 @@ class RoomDetailScreen extends ConsumerWidget {
 
     if (confirmed == true) {
       try {
-        await ref.read(roomDaoProvider).deleteRoom(roomId);
+        await ref.read(roomDaoProvider).deleteRoom(widget.roomId);
         ref.invalidate(roomsListProvider);
         if (context.mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
@@ -41,10 +49,13 @@ class RoomDetailScreen extends ConsumerWidget {
   }
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
-    final roomAsync = ref.watch(roomDetailProvider(roomId));
-    final billsAsync = ref.watch(roomBillsProvider(roomId));
-    final paymentsAsync = ref.watch(roomPaymentsProvider(roomId));
+  Widget build(BuildContext context) {
+    final roomAsync = ref.watch(roomDetailProvider(widget.roomId));
+    final billsAsync = ref.watch(roomBillsProvider(widget.roomId));
+    final paymentsAsync = ref.watch(roomPaymentsProvider(widget.roomId));
+
+    final allBills = billsAsync.valueOrNull ?? [];
+    final hasGeneratedBills = allBills.isNotEmpty;
 
     return Scaffold(
       appBar: AppBar(
@@ -52,12 +63,12 @@ class RoomDetailScreen extends ConsumerWidget {
         actions: [
           IconButton(
             icon: const Icon(Icons.edit_outlined),
-            onPressed: () => context.push('/rooms/$roomId/edit'),
+            onPressed: () => context.push('/rooms/${widget.roomId}/edit'),
           ),
           IconButton(
             icon: const Icon(Icons.delete_outline, color: Colors.red),
             tooltip: 'Delete Room',
-            onPressed: () => _deleteRoom(context, ref),
+            onPressed: () => _deleteRoom(context),
           ),
         ],
       ),
@@ -138,14 +149,16 @@ class RoomDetailScreen extends ConsumerWidget {
                                 label: const Text('Generate Bill'),
                               ),
                             ),
-                            const SizedBox(width: 8),
-                            Expanded(
-                              child: OutlinedButton.icon(
-                                onPressed: () => context.push('/payments/record?tenancyId=${room.activeTenancyId}'),
-                                icon: const Icon(Icons.payment, size: 18),
-                                label: const Text('Record Payment'),
+                            if (hasGeneratedBills) ...[
+                              const SizedBox(width: 8),
+                              Expanded(
+                                child: OutlinedButton.icon(
+                                  onPressed: () => context.push('/payments/record?tenancyId=${room.activeTenancyId}&roomId=${room.id}'),
+                                  icon: const Icon(Icons.payment, size: 18),
+                                  label: const Text('Record Payment'),
+                                ),
                               ),
-                            ),
+                            ],
                           ],
                         ),
                       ] else ...[
@@ -163,21 +176,134 @@ class RoomDetailScreen extends ConsumerWidget {
               ),
               const SizedBox(height: 16),
 
+              // Month & Year Filter Bar
+              Card(
+                color: AppColors.surfaceVariant.withOpacity(0.35),
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        children: [
+                          Row(
+                            children: const [
+                              Icon(Icons.filter_list, size: 18, color: AppColors.primary),
+                              SizedBox(width: 6),
+                              Text(
+                                'Filter Bills & Payments',
+                                style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
+                              ),
+                            ],
+                          ),
+                          if (_filterMonth != null || _filterYear != null)
+                            TextButton(
+                              style: TextButton.styleFrom(
+                                padding: EdgeInsets.zero,
+                                visualDensity: VisualDensity.compact,
+                              ),
+                              onPressed: () {
+                                setState(() {
+                                  _filterMonth = null;
+                                  _filterYear = null;
+                                });
+                              },
+                              child: const Text('Reset', style: TextStyle(fontSize: 12, color: Colors.red)),
+                            ),
+                        ],
+                      ),
+                      const SizedBox(height: 8),
+                      Row(
+                        children: [
+                          Expanded(
+                            flex: 3,
+                            child: DropdownButtonFormField<int?>(
+                              value: _filterMonth,
+                              decoration: const InputDecoration(
+                                labelText: 'Month',
+                                border: OutlineInputBorder(),
+                                contentPadding: EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                                isDense: true,
+                              ),
+                              items: [
+                                const DropdownMenuItem(value: null, child: Text('All Months')),
+                                ...List.generate(12, (i) {
+                                  final m = i + 1;
+                                  return DropdownMenuItem(
+                                    value: m,
+                                    child: Text(DateHelper.getMonthName(m)),
+                                  );
+                                }),
+                              ],
+                              onChanged: (val) => setState(() => _filterMonth = val),
+                            ),
+                          ),
+                          const SizedBox(width: 8),
+                          Expanded(
+                            flex: 2,
+                            child: DropdownButtonFormField<int?>(
+                              value: _filterYear,
+                              decoration: const InputDecoration(
+                                labelText: 'Year',
+                                border: OutlineInputBorder(),
+                                contentPadding: EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                                isDense: true,
+                              ),
+                              items: [
+                                const DropdownMenuItem(value: null, child: Text('All Years')),
+                                ...List.generate(6, (i) {
+                                  final y = DateTime.now().year - 2 + i;
+                                  return DropdownMenuItem(
+                                    value: y,
+                                    child: Text('$y'),
+                                  );
+                                }),
+                              ],
+                              onChanged: (val) => setState(() => _filterYear = val),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+              const SizedBox(height: 16),
+
               // Generated Bills Section
-              Text(
-                'Generated Bills',
-                style: Theme.of(context).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.bold),
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  Text(
+                    'Generated Bills',
+                    style: Theme.of(context).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.bold),
+                  ),
+                  if (_filterMonth != null || _filterYear != null)
+                    Text(
+                      'Filtered',
+                      style: TextStyle(color: Colors.grey.shade600, fontSize: 12, fontStyle: FontStyle.italic),
+                    ),
+                ],
               ),
               const SizedBox(height: 8),
               billsAsync.when(
                 data: (bills) {
-                  if (bills.isEmpty) {
+                  final displayedBills = bills.where((b) {
+                    if (_filterMonth != null && b.billingMonth != _filterMonth) return false;
+                    if (_filterYear != null && b.billingYear != _filterYear) return false;
+                    return true;
+                  }).toList();
+
+                  if (displayedBills.isEmpty) {
                     return Card(
                       child: Padding(
                         padding: const EdgeInsets.all(16),
                         child: Center(
                           child: Text(
-                            'No bills generated for this room yet.',
+                            bills.isEmpty
+                                ? 'No bills generated for this room yet.'
+                                : 'No bills found for the selected filter.',
                             style: TextStyle(color: Colors.grey.shade600, fontSize: 13),
                           ),
                         ),
@@ -188,10 +314,10 @@ class RoomDetailScreen extends ConsumerWidget {
                     child: ListView.separated(
                       shrinkWrap: true,
                       physics: const NeverScrollableScrollPhysics(),
-                      itemCount: bills.length,
+                      itemCount: displayedBills.length,
                       separatorBuilder: (_, __) => const Divider(height: 1),
                       itemBuilder: (context, index) {
-                        final bill = bills[index];
+                        final bill = displayedBills[index];
                         return ListTile(
                           title: Text(
                             DateHelper.formatBillingPeriod(bill.billingMonth, bill.billingYear),
@@ -222,20 +348,39 @@ class RoomDetailScreen extends ConsumerWidget {
               const SizedBox(height: 16),
 
               // Recorded Payments Section
-              Text(
-                'Payment History',
-                style: Theme.of(context).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.bold),
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  Text(
+                    'Payment History',
+                    style: Theme.of(context).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.bold),
+                  ),
+                  if (_filterMonth != null || _filterYear != null)
+                    Text(
+                      'Filtered',
+                      style: TextStyle(color: Colors.grey.shade600, fontSize: 12, fontStyle: FontStyle.italic),
+                    ),
+                ],
               ),
               const SizedBox(height: 8),
               paymentsAsync.when(
                 data: (payments) {
-                  if (payments.isEmpty) {
+                  final displayedPayments = payments.where((p) {
+                    final dt = DateTime.fromMillisecondsSinceEpoch(p.paymentDateEpoch);
+                    if (_filterMonth != null && dt.month != _filterMonth) return false;
+                    if (_filterYear != null && dt.year != _filterYear) return false;
+                    return true;
+                  }).toList();
+
+                  if (displayedPayments.isEmpty) {
                     return Card(
                       child: Padding(
                         padding: const EdgeInsets.all(16),
                         child: Center(
                           child: Text(
-                            'No payments recorded for this room yet.',
+                            payments.isEmpty
+                                ? 'No payments recorded for this room yet.'
+                                : 'No payments found for the selected filter.',
                             style: TextStyle(color: Colors.grey.shade600, fontSize: 13),
                           ),
                         ),
@@ -246,10 +391,10 @@ class RoomDetailScreen extends ConsumerWidget {
                     child: ListView.separated(
                       shrinkWrap: true,
                       physics: const NeverScrollableScrollPhysics(),
-                      itemCount: payments.length,
+                      itemCount: displayedPayments.length,
                       separatorBuilder: (_, __) => const Divider(height: 1),
                       itemBuilder: (context, index) {
-                        final payment = payments[index];
+                        final payment = displayedPayments[index];
                         return ListTile(
                           leading: const CircleAvatar(
                             backgroundColor: AppColors.primaryContainer,

@@ -6,6 +6,19 @@ class DateHelper {
   static final DateFormat _shortMonthYearFormat = DateFormat('MMM yyyy');
   static final DateFormat _dateTimeFormat = DateFormat('dd-MM-yyyy hh:mm a');
 
+  static const List<String> monthNames = [
+    'January', 'February', 'March', 'April', 'May', 'June',
+    'July', 'August', 'September', 'October', 'November', 'December'
+  ];
+
+  /// Returns full month name from 1-12
+  static String getMonthName(int month) {
+    if (month >= 1 && month <= 12) {
+      return monthNames[month - 1];
+    }
+    return '';
+  }
+
   /// Formats epoch milliseconds to DD-MM-YYYY
   static String formatEpoch(int epochMillis) {
     if (epochMillis <= 0) return '-';

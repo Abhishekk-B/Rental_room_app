@@ -207,6 +207,7 @@ class RoomDao {
     required bool isActive,
     String? notes,
     String? meterNumber,
+    int? meterReadingCentiunits,
   }) async {
     final db = await _dbProvider.database;
     final now = DateTime.now().millisecondsSinceEpoch;
@@ -226,28 +227,64 @@ class RoomDao {
         whereArgs: [id],
       );
 
+      final existingMeter = await txn.query(
+        DatabaseTables.meters,
+        where: 'room_id = ?',
+        whereArgs: [id],
+      );
+
+      String? activeMeterId;
       if (meterNumber != null && meterNumber.trim().isNotEmpty) {
-        final existingMeter = await txn.query(
-          DatabaseTables.meters,
-          where: 'room_id = ?',
-          whereArgs: [id],
-        );
         if (existingMeter.isEmpty) {
-          final meterId = 'meter_${id.replaceAll('room_', '')}';
+          activeMeterId = 'meter_${id.replaceAll('room_', '')}';
           await txn.insert(DatabaseTables.meters, {
-            'id': meterId,
+            'id': activeMeterId,
             'room_id': id,
             'meter_number': meterNumber.trim(),
-            'initial_reading_centiunits': 0,
+            'initial_reading_centiunits': meterReadingCentiunits ?? 0,
             'is_active': 1,
             'created_at_epoch': now,
           });
         } else {
+          activeMeterId = existingMeter.first['id'] as String;
           await txn.update(
             DatabaseTables.meters,
             {'meter_number': meterNumber.trim()},
             where: 'room_id = ?',
             whereArgs: [id],
+          );
+        }
+      } else if (existingMeter.isNotEmpty) {
+        activeMeterId = existingMeter.first['id'] as String;
+      }
+
+      if (meterReadingCentiunits != null && activeMeterId != null) {
+        final latestReadingRows = await txn.query(
+          DatabaseTables.meterReadings,
+          where: 'meter_id = ?',
+          whereArgs: [activeMeterId],
+          orderBy: 'billing_year DESC, billing_month DESC, reading_date_epoch DESC',
+          limit: 1,
+        );
+        if (latestReadingRows.isNotEmpty) {
+          final lrId = latestReadingRows.first['id'] as String;
+          final prev = latestReadingRows.first['previous_reading_centiunits'] as int;
+          final newUnits = meterReadingCentiunits >= prev ? (meterReadingCentiunits - prev) : 0;
+          await txn.update(
+            DatabaseTables.meterReadings,
+            {
+              'current_reading_centiunits': meterReadingCentiunits,
+              'units_consumed_centiunits': newUnits,
+            },
+            where: 'id = ?',
+            whereArgs: [lrId],
+          );
+        } else {
+          await txn.update(
+            DatabaseTables.meters,
+            {'initial_reading_centiunits': meterReadingCentiunits},
+            where: 'id = ?',
+            whereArgs: [activeMeterId],
           );
         }
       }

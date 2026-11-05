@@ -43,6 +43,7 @@ class _AddEditRoomScreenState extends ConsumerState<AddEditRoomScreen> {
         _elecRateCtrl.text = CurrencyHelper.paiseToRupeesString(room.electricityRatePaise);
         _descCtrl.text = room.description ?? '';
         _meterCtrl.text = room.meterNumber ?? '';
+        _initialReadingCtrl.text = CurrencyHelper.centiunitsToString(room.latestReadingCentiunits ?? 0);
         _notesCtrl.text = room.notes ?? '';
         _isActive = room.isActive;
       });
@@ -70,11 +71,11 @@ class _AddEditRoomScreenState extends ConsumerState<AddEditRoomScreen> {
       final dao = ref.read(roomDaoProvider);
       final rentPaise = CurrencyHelper.parseRupeesToPaise(_rentCtrl.text);
       final elecRatePaise = CurrencyHelper.parseRupeesToPaise(_elecRateCtrl.text);
+      final meterReadingCenti = CurrencyHelper.parseReadingToCentiunits(_initialReadingCtrl.text);
 
       if (widget.roomId == null) {
         // Create new room
         final newId = 'room_${DateTime.now().millisecondsSinceEpoch}';
-        final initialCenti = CurrencyHelper.parseReadingToCentiunits(_initialReadingCtrl.text);
         await dao.createRoom(
           id: newId,
           propertyId: AppConstants.defaultPropertyId,
@@ -83,7 +84,7 @@ class _AddEditRoomScreenState extends ConsumerState<AddEditRoomScreen> {
           defaultRentPaise: rentPaise,
           electricityRatePaise: elecRatePaise > 0 ? elecRatePaise : 1000,
           meterNumber: _meterCtrl.text,
-          initialMeterReadingCentiunits: initialCenti,
+          initialMeterReadingCentiunits: meterReadingCenti,
           notes: _notesCtrl.text,
         );
       } else {
@@ -97,6 +98,7 @@ class _AddEditRoomScreenState extends ConsumerState<AddEditRoomScreen> {
           isActive: _isActive,
           notes: _notesCtrl.text,
           meterNumber: _meterCtrl.text,
+          meterReadingCentiunits: meterReadingCenti,
         );
       }
 
@@ -228,19 +230,17 @@ class _AddEditRoomScreenState extends ConsumerState<AddEditRoomScreen> {
                 prefixIcon: Icon(Icons.bolt_outlined),
               ),
             ),
-            if (!isEditing) ...[
-              const SizedBox(height: 16),
-              TextFormField(
-                controller: _initialReadingCtrl,
-                keyboardType: const TextInputType.numberWithOptions(decimal: true),
-                decoration: const InputDecoration(
-                  labelText: 'Initial Meter Reading (Units)',
-                  hintText: 'e.g. 1000.00',
-                  border: OutlineInputBorder(),
-                  prefixIcon: Icon(Icons.speed_outlined),
-                ),
+            const SizedBox(height: 16),
+            TextFormField(
+              controller: _initialReadingCtrl,
+              keyboardType: const TextInputType.numberWithOptions(decimal: true),
+              decoration: InputDecoration(
+                labelText: isEditing ? 'Last / Current Meter Reading (Units)' : 'Initial Meter Reading (Units)',
+                hintText: 'e.g. 1000.00',
+                border: const OutlineInputBorder(),
+                prefixIcon: const Icon(Icons.speed_outlined),
               ),
-            ],
+            ),
             const SizedBox(height: 16),
             TextFormField(
               controller: _descCtrl,

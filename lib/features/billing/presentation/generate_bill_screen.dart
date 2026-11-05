@@ -26,6 +26,9 @@ class _GenerateBillScreenState extends ConsumerState<GenerateBillScreen> {
   RoomWithDetails? _selectedRoom;
   bool _preselectedHandled = false;
 
+  late int _billingMonth;
+  late int _billingYear;
+
   // Rent & Advance
   final _rentCtrl = TextEditingController();
   final _rentAdvAppliedCtrl = TextEditingController(text: '0');
@@ -51,6 +54,9 @@ class _GenerateBillScreenState extends ConsumerState<GenerateBillScreen> {
   void initState() {
     super.initState();
     _selectedRoomId = widget.preselectedRoomId;
+    final now = DateTime.now();
+    _billingMonth = now.month;
+    _billingYear = now.year;
   }
 
   @override
@@ -67,26 +73,17 @@ class _GenerateBillScreenState extends ConsumerState<GenerateBillScreen> {
     super.dispose();
   }
 
-  Future<void> _onRoomSelected(RoomWithDetails room) async {
-    final period = ref.read(selectedPeriodProvider);
-
+  Future<void> _loadRoomPeriodData(RoomWithDetails room) async {
     setState(() {
-      _selectedRoom = room;
-      _selectedRoomId = room.id;
-      _rentCtrl.text = CurrencyHelper.paiseToRupeesString(room.agreedRentPaise ?? room.defaultRentPaise);
-
-      // Electricity Sub-meter defaults
-      _previousReadingCentiunits = room.latestReadingCentiunits ?? 0;
-      _prevReadingCtrl.text = CurrencyHelper.centiunitsToString(_previousReadingCentiunits);
-      _elecRateCtrl.text = CurrencyHelper.paiseToRupeesString(room.electricityRatePaise);
-
       // Set due date according to tenant's billing cycle day if configured
       if (room.billingDueDay != null && room.billingDueDay! > 0) {
         final day = room.billingDueDay!.clamp(1, 28);
-        _dueDate = DateTime(period.year, period.month, day);
+        _dueDate = DateTime(_billingYear, _billingMonth, day);
       } else if (room.billingDueDay == 0) {
         // End of month
-        _dueDate = DateTime(period.year, period.month + 1, 0);
+        _dueDate = DateTime(_billingYear, _billingMonth + 1, 0);
+      } else {
+        _dueDate = DateTime(_billingYear, _billingMonth, 5);
       }
     });
 
@@ -106,8 +103,8 @@ class _GenerateBillScreenState extends ConsumerState<GenerateBillScreen> {
       // 2. Fetch previous outstanding dues
       final prev = await ref.read(billingDaoProvider).getPreviousOutstandingBalance(
         tenancyId: room.activeTenancyId!,
-        month: period.month,
-        year: period.year,
+        month: _billingMonth,
+        year: _billingYear,
       );
       setState(() => _previousBalancePaise = prev);
     }
@@ -115,8 +112,8 @@ class _GenerateBillScreenState extends ConsumerState<GenerateBillScreen> {
     // 3. Fetch pre-allocated electricity if any
     final elecPaise = await ref.read(electricityDaoProvider).getAllocatedElectricityForRoom(
       roomId: room.id,
-      month: period.month,
-      year: period.year,
+      month: _billingMonth,
+      year: _billingYear,
     );
     if (elecPaise != null && elecPaise > 0) {
       setState(() {
@@ -127,12 +124,45 @@ class _GenerateBillScreenState extends ConsumerState<GenerateBillScreen> {
     }
   }
 
+  Future<void> _onRoomSelected(RoomWithDetails room) async {
+    setState(() {
+      _selectedRoom = room;
+      _selectedRoomId = room.id;
+      _rentCtrl.text = CurrencyHelper.paiseToRupeesString(room.agreedRentPaise ?? room.defaultRentPaise);
+
+      // Electricity Sub-meter defaults
+      _previousReadingCentiunits = room.latestReadingCentiunits ?? 0;
+      _prevReadingCtrl.text = CurrencyHelper.centiunitsToString(_previousReadingCentiunits);
+      _elecRateCtrl.text = CurrencyHelper.paiseToRupeesString(room.electricityRatePaise);
+    });
+
+    await _loadRoomPeriodData(room);
+  }
+
   void _recalculateElectricity() {
     final prevCenti = _previousReadingCentiunits;
-    final newCenti = CurrencyHelper.parseReadingToCentiunits(_newReadingCtrl.text);
+    final text = _newReadingCtrl.text.trim();
+    if (text.isEmpty) {
+      setState(() {
+        _elecUnitsCtrl.text = '0';
+        _elecAmountCtrl.text = '0';
+      });
+      return;
+    }
+
+    final val = double.tryParse(text);
+    if (val == null || val < 0) {
+      setState(() {
+        _elecUnitsCtrl.text = '0';
+        _elecAmountCtrl.text = '0';
+      });
+      return;
+    }
+
+    final newCenti = CurrencyHelper.parseReadingToCentiunits(text);
     final ratePaise = CurrencyHelper.parseRupeesToPaise(_elecRateCtrl.text);
 
-    if (_newReadingCtrl.text.trim().isNotEmpty && newCenti >= prevCenti) {
+    if (newCenti >= prevCenti) {
       final unitsCenti = newCenti - prevCenti;
       final chargePaise = ((unitsCenti * ratePaise) + 50) ~/ 100;
 
@@ -143,6 +173,11 @@ class _GenerateBillScreenState extends ConsumerState<GenerateBillScreen> {
         // Auto-suggest electricity advance application
         final autoElecAdv = _elecAdvAvailablePaise >= chargePaise ? chargePaise : _elecAdvAvailablePaise;
         _elecAdvAppliedCtrl.text = CurrencyHelper.paiseToRupeesString(autoElecAdv);
+      });
+    } else {
+      setState(() {
+        _elecUnitsCtrl.text = '0';
+        _elecAmountCtrl.text = '0';
       });
     }
   }
@@ -165,7 +200,6 @@ class _GenerateBillScreenState extends ConsumerState<GenerateBillScreen> {
     setState(() => _isLoading = true);
 
     try {
-      final period = ref.read(selectedPeriodProvider);
       final rentPaise = CurrencyHelper.parseRupeesToPaise(_rentCtrl.text);
       final rentAdvAppliedPaise = CurrencyHelper.parseRupeesToPaise(_rentAdvAppliedCtrl.text);
 
@@ -181,8 +215,8 @@ class _GenerateBillScreenState extends ConsumerState<GenerateBillScreen> {
         tenantPhone: _selectedRoom!.activeTenantPhone ?? '',
         roomId: _selectedRoom!.id,
         roomNumber: _selectedRoom!.roomNumber,
-        billingMonth: period.month,
-        billingYear: period.year,
+        billingMonth: _billingMonth,
+        billingYear: _billingYear,
         rentAmountPaise: rentPaise,
         rentAdvanceAvailablePaise: _rentAdvAvailablePaise,
         rentAdvanceAppliedPaise: rentAdvAppliedPaise,
@@ -206,10 +240,10 @@ class _GenerateBillScreenState extends ConsumerState<GenerateBillScreen> {
         final newReadingCenti = CurrencyHelper.parseReadingToCentiunits(newReadingText);
         if (newReadingCenti >= _previousReadingCentiunits) {
           await ref.read(electricityDaoProvider).recordMeterReading(
-            id: 'mr_${_selectedRoom!.meterId}_${period.year}_${period.month}',
+            id: 'mr_${_selectedRoom!.meterId}_${_billingYear}_${_billingMonth}',
             meterId: _selectedRoom!.meterId!,
-            billingMonth: period.month,
-            billingYear: period.year,
+            billingMonth: _billingMonth,
+            billingYear: _billingYear,
             readingDateEpoch: DateTime.now().millisecondsSinceEpoch,
             currentReadingCentiunits: newReadingCenti,
             previousReadingCentiunits: _previousReadingCentiunits,
@@ -222,6 +256,7 @@ class _GenerateBillScreenState extends ConsumerState<GenerateBillScreen> {
       ref.invalidate(roomsListProvider);
       ref.invalidate(dashboardSummaryProvider);
       ref.invalidate(tenancyAdvancesProvider(_selectedRoom!.activeTenancyId!));
+      ref.invalidate(roomBillsProvider(_selectedRoom!.id));
 
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -288,22 +323,94 @@ class _GenerateBillScreenState extends ConsumerState<GenerateBillScreen> {
         child: ListView(
           padding: const EdgeInsets.all(16),
           children: [
-            // Period Badge
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-              decoration: BoxDecoration(
-                color: AppColors.primaryContainer.withOpacity(0.3),
-                borderRadius: BorderRadius.circular(10),
+            // Billing Period Selector (allows current, past or future months)
+            Card(
+              elevation: 0,
+              color: AppColors.primaryContainer.withOpacity(0.25),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(12),
+                side: BorderSide(color: AppColors.primary.withOpacity(0.2)),
               ),
-              child: Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                children: [
-                  const Text('Billing Period:', style: TextStyle(fontWeight: FontWeight.w600, fontSize: 13)),
-                  Text(
-                    DateHelper.formatBillingPeriod(period.month, period.year),
-                    style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14, color: AppColors.primary),
-                  ),
-                ],
+              child: Padding(
+                padding: const EdgeInsets.all(12),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        const Icon(Icons.calendar_month, color: AppColors.primary, size: 20),
+                        const SizedBox(width: 8),
+                        Text(
+                          'Billing Cycle / Period',
+                          style: Theme.of(context).textTheme.titleSmall?.copyWith(
+                                fontWeight: FontWeight.bold,
+                                color: AppColors.primary,
+                              ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 10),
+                    Row(
+                      children: [
+                        Expanded(
+                          flex: 3,
+                          child: DropdownButtonFormField<int>(
+                            value: _billingMonth,
+                            decoration: const InputDecoration(
+                              labelText: 'Billing Month',
+                              border: OutlineInputBorder(),
+                              contentPadding: EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+                              isDense: true,
+                            ),
+                            items: List.generate(12, (i) {
+                              final m = i + 1;
+                              return DropdownMenuItem(
+                                value: m,
+                                child: Text(DateHelper.getMonthName(m)),
+                              );
+                            }),
+                            onChanged: (m) {
+                              if (m != null && m != _billingMonth) {
+                                setState(() => _billingMonth = m);
+                                if (_selectedRoom != null) {
+                                  _loadRoomPeriodData(_selectedRoom!);
+                                }
+                              }
+                            },
+                          ),
+                        ),
+                        const SizedBox(width: 10),
+                        Expanded(
+                          flex: 2,
+                          child: DropdownButtonFormField<int>(
+                            value: _billingYear,
+                            decoration: const InputDecoration(
+                              labelText: 'Year',
+                              border: OutlineInputBorder(),
+                              contentPadding: EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+                              isDense: true,
+                            ),
+                            items: List.generate(7, (i) {
+                              final y = DateTime.now().year - 3 + i;
+                              return DropdownMenuItem(
+                                value: y,
+                                child: Text('$y'),
+                              );
+                            }),
+                            onChanged: (y) {
+                              if (y != null && y != _billingYear) {
+                                setState(() => _billingYear = y);
+                                if (_selectedRoom != null) {
+                                  _loadRoomPeriodData(_selectedRoom!);
+                                }
+                              }
+                            },
+                          ),
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
               ),
             ),
             const SizedBox(height: 16),
@@ -553,6 +660,18 @@ class _GenerateBillScreenState extends ConsumerState<GenerateBillScreen> {
                               hintText: 'e.g. 1050',
                             ),
                             onChanged: (_) => _recalculateElectricity(),
+                            validator: (val) {
+                              if (val != null && val.trim().isNotEmpty) {
+                                final numVal = double.tryParse(val.trim());
+                                if (numVal == null) return 'Invalid reading';
+                                if (numVal < 0) return 'Cannot be negative';
+                                final newCenti = CurrencyHelper.parseReadingToCentiunits(val.trim());
+                                if (newCenti < _previousReadingCentiunits) {
+                                  return 'Must be ≥ ${_prevReadingCtrl.text}';
+                                }
+                              }
+                              return null;
+                            },
                           ),
                         ),
                       ],

@@ -361,7 +361,7 @@ class _BillDetailScreenState extends ConsumerState<BillDetailScreen> {
                     Expanded(
                       child: FilledButton.icon(
                         onPressed: () => context.push(
-                          '/payments/record?tenancyId=${bill.tenancyId}&billId=${bill.id}&amount=${bill.remainingBalancePaise}',
+                          '/payments/record?tenancyId=${bill.tenancyId}&billId=${bill.id}&rentAmount=${bill.outstandingRentPaise}&elecAmount=${bill.outstandingElectricityPaise}&amount=${bill.remainingBalancePaise}&roomId=${bill.roomId}',
                         ),
                         icon: const Icon(Icons.payment),
                         label: const Text('Record Payment'),

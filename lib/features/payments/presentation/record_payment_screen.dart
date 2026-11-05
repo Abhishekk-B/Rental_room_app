@@ -1,23 +1,31 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:go_router/go_router.dart';
 import '../../../core/constants/app_colors.dart';
 import '../../../core/utils/currency_helper.dart';
 import '../../../core/utils/date_helper.dart';
 import '../../billing/providers/billing_provider.dart';
 import '../../dashboard/providers/dashboard_provider.dart';
+import '../../rooms/providers/rooms_provider.dart';
 import '../../tenants/providers/tenants_provider.dart';
 import '../providers/payments_provider.dart';
 
 class RecordPaymentScreen extends ConsumerStatefulWidget {
   final String? preselectedTenancyId;
   final String? preselectedBillId;
+  final String? prefilledRentAmountPaise;
+  final String? prefilledElecAmountPaise;
   final String? prefilledAmountPaise;
+  final String? preselectedRoomId;
 
   const RecordPaymentScreen({
     Key? key,
     this.preselectedTenancyId,
     this.preselectedBillId,
+    this.prefilledRentAmountPaise,
+    this.prefilledElecAmountPaise,
     this.prefilledAmountPaise,
+    this.preselectedRoomId,
   }) : super(key: key);
 
   @override
@@ -32,7 +40,7 @@ class _RecordPaymentScreenState extends ConsumerState<RecordPaymentScreen> {
   final _totalAmountCtrl = TextEditingController(text: '0');
   final _refCtrl = TextEditingController();
   final _notesCtrl = TextEditingController();
-  String _paymentMethod = 'UPI';
+  String _paymentMethod = 'CASH';
   DateTime _paymentDate = DateTime.now();
   bool _isLoading = false;
 
@@ -40,12 +48,22 @@ class _RecordPaymentScreenState extends ConsumerState<RecordPaymentScreen> {
   void initState() {
     super.initState();
     _selectedTenancyId = widget.preselectedTenancyId;
-    if (widget.prefilledAmountPaise != null) {
+    _paymentMethod = 'CASH';
+
+    if (widget.prefilledRentAmountPaise != null) {
+      final rentPaise = int.tryParse(widget.prefilledRentAmountPaise!) ?? 0;
+      _rentAmountCtrl.text = CurrencyHelper.paiseToRupeesString(rentPaise);
+    }
+    if (widget.prefilledElecAmountPaise != null) {
+      final elecPaise = int.tryParse(widget.prefilledElecAmountPaise!) ?? 0;
+      _elecAmountCtrl.text = CurrencyHelper.paiseToRupeesString(elecPaise);
+    }
+
+    if (widget.prefilledRentAmountPaise == null && widget.prefilledElecAmountPaise == null && widget.prefilledAmountPaise != null) {
       final paise = int.tryParse(widget.prefilledAmountPaise!) ?? 0;
-      if (paise > 0) {
-        _rentAmountCtrl.text = CurrencyHelper.paiseToRupeesString(paise);
-        _totalAmountCtrl.text = CurrencyHelper.paiseToRupeesString(paise);
-      }
+      _totalAmountCtrl.text = CurrencyHelper.paiseToRupeesString(paise);
+    } else {
+      _syncTotalFromCategories();
     }
   }
 
@@ -110,11 +128,30 @@ class _RecordPaymentScreenState extends ConsumerState<RecordPaymentScreen> {
       ref.invalidate(billsListProvider);
       ref.invalidate(dashboardSummaryProvider);
 
+      String? targetRoomId = widget.preselectedRoomId;
+      if (targetRoomId == null && _selectedTenancyId != null) {
+        final tenants = ref.read(tenantsListProvider).valueOrNull;
+        if (tenants != null) {
+          final t = tenants.where((element) => element.activeTenancyId == _selectedTenancyId).firstOrNull;
+          targetRoomId = t?.activeRoomId;
+        }
+      }
+
+      if (targetRoomId != null) {
+        ref.invalidate(roomBillsProvider(targetRoomId));
+        ref.invalidate(roomPaymentsProvider(targetRoomId));
+        ref.invalidate(roomDetailProvider(targetRoomId));
+      }
+
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text('Payment recorded! Receipt: $receipt')),
         );
-        Navigator.pop(context);
+        if (targetRoomId != null) {
+          context.go('/rooms/$targetRoomId');
+        } else {
+          Navigator.pop(context);
+        }
       }
     } catch (e) {
       if (mounted) {
@@ -310,8 +347,8 @@ class _RecordPaymentScreenState extends ConsumerState<RecordPaymentScreen> {
                 prefixIcon: Icon(Icons.account_balance_wallet_outlined),
               ),
               items: const [
-                DropdownMenuItem(value: 'UPI', child: Text('UPI (Google Pay, PhonePe, Paytm)')),
                 DropdownMenuItem(value: 'CASH', child: Text('Cash')),
+                DropdownMenuItem(value: 'UPI', child: Text('UPI (Google Pay, PhonePe, Paytm)')),
                 DropdownMenuItem(value: 'BANK_TRANSFER', child: Text('Bank Transfer (NEFT / IMPS)')),
                 DropdownMenuItem(value: 'CHEQUE', child: Text('Cheque')),
                 DropdownMenuItem(value: 'OTHER', child: Text('Other')),
