@@ -5,14 +5,17 @@ import '../../dashboard/providers/dashboard_provider.dart';
 final billingDaoProvider = Provider<BillingDao>((ref) => BillingDao());
 
 final billStatusFilterProvider = StateProvider<String>((ref) => 'ALL');
+final billMonthFilterProvider = StateProvider<int?>((ref) => null);
+final billYearFilterProvider = StateProvider<int?>((ref) => null);
 
 final billsListProvider = FutureProvider.autoDispose<List<MonthlyBillRecord>>((ref) async {
-  final period = ref.watch(selectedPeriodProvider);
+  final month = ref.watch(billMonthFilterProvider);
+  final year = ref.watch(billYearFilterProvider);
   final status = ref.watch(billStatusFilterProvider);
   final dao = ref.watch(billingDaoProvider);
   return await dao.getBills(
-    month: period.month,
-    year: period.year,
+    month: month,
+    year: year,
     status: status,
   );
 });

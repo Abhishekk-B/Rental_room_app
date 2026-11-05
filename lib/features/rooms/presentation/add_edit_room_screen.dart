@@ -31,6 +31,36 @@ class _AddEditRoomScreenState extends ConsumerState<AddEditRoomScreen> {
     super.initState();
     if (widget.roomId != null) {
       _loadExistingRoom();
+    } else {
+      _suggestNextRoomAndMeter();
+    }
+  }
+
+  Future<void> _suggestNextRoomAndMeter() async {
+    try {
+      final rooms = await ref.read(roomDaoProvider).getAllRoomsWithDetails();
+      int highestNum = 100;
+      for (final r in rooms) {
+        final digits = r.roomNumber.replaceAll(RegExp(r'[^0-9]'), '');
+        final val = int.tryParse(digits);
+        if (val != null && val > highestNum) {
+          highestNum = val;
+        }
+      }
+      final nextNum = (highestNum + 1).toString();
+      if (mounted) {
+        setState(() {
+          _roomNumberCtrl.text = nextNum;
+          _meterCtrl.text = 'MTR-$nextNum';
+        });
+      }
+    } catch (_) {
+      if (mounted) {
+        setState(() {
+          _roomNumberCtrl.text = '101';
+          _meterCtrl.text = 'MTR-101';
+        });
+      }
     }
   }
 
@@ -174,10 +204,16 @@ class _AddEditRoomScreenState extends ConsumerState<AddEditRoomScreen> {
               controller: _roomNumberCtrl,
               decoration: const InputDecoration(
                 labelText: 'Room Name / Number *',
-                hintText: 'e.g. Room 101 or 1st Floor Deluxe',
+                hintText: 'e.g. 101 or 102',
                 border: OutlineInputBorder(),
                 prefixIcon: Icon(Icons.meeting_room_outlined),
               ),
+              onChanged: (val) {
+                if (!isEditing && (_meterCtrl.text.isEmpty || _meterCtrl.text.startsWith('MTR-'))) {
+                  final trimmed = val.trim();
+                  _meterCtrl.text = trimmed.isNotEmpty ? 'MTR-$trimmed' : '';
+                }
+              },
               validator: (v) => (v == null || v.trim().isEmpty) ? 'Required' : null,
             ),
             const SizedBox(height: 16),

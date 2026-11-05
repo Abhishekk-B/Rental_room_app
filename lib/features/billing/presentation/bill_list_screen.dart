@@ -14,9 +14,19 @@ class BillListScreen extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final period = ref.watch(selectedPeriodProvider);
+    final selectedMonth = ref.watch(billMonthFilterProvider);
+    final selectedYear = ref.watch(billYearFilterProvider);
     final currentStatus = ref.watch(billStatusFilterProvider);
     final billsAsync = ref.watch(billsListProvider);
+
+    String periodSubtitle = 'All Billing Periods';
+    if (selectedMonth != null && selectedYear != null) {
+      periodSubtitle = DateHelper.formatBillingPeriod(selectedMonth, selectedYear);
+    } else if (selectedMonth != null) {
+      periodSubtitle = DateHelper.getMonthName(selectedMonth);
+    } else if (selectedYear != null) {
+      periodSubtitle = 'Year $selectedYear';
+    }
 
     return Scaffold(
       appBar: AppBar(
@@ -25,7 +35,7 @@ class BillListScreen extends ConsumerWidget {
           children: [
             const Text('Monthly Rent Bills', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 18)),
             Text(
-              DateHelper.formatBillingPeriod(period.month, period.year),
+              periodSubtitle,
               style: TextStyle(fontSize: 12, color: Theme.of(context).colorScheme.onSurfaceVariant),
             ),
           ],
@@ -33,7 +43,78 @@ class BillListScreen extends ConsumerWidget {
       ),
       body: Column(
         children: [
-          // Filter Chips
+          // Month & Year Filter Row
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 8, 16, 4),
+            child: Row(
+              children: [
+                Expanded(
+                  flex: 3,
+                  child: DropdownButtonFormField<int?>(
+                    value: selectedMonth,
+                    decoration: const InputDecoration(
+                      labelText: 'Month',
+                      contentPadding: EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                      border: OutlineInputBorder(),
+                      isDense: true,
+                    ),
+                    items: [
+                      const DropdownMenuItem(value: null, child: Text('All Months')),
+                      ...List.generate(12, (i) {
+                        final m = i + 1;
+                        return DropdownMenuItem(
+                          value: m,
+                          child: Text(DateHelper.getMonthName(m)),
+                        );
+                      }),
+                    ],
+                    onChanged: (val) {
+                      ref.read(billMonthFilterProvider.notifier).state = val;
+                    },
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  flex: 2,
+                  child: DropdownButtonFormField<int?>(
+                    value: selectedYear,
+                    decoration: const InputDecoration(
+                      labelText: 'Year',
+                      contentPadding: EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                      border: OutlineInputBorder(),
+                      isDense: true,
+                    ),
+                    items: [
+                      const DropdownMenuItem(value: null, child: Text('All Years')),
+                      ...List.generate(6, (i) {
+                        final y = DateTime.now().year - 2 + i;
+                        return DropdownMenuItem(
+                          value: y,
+                          child: Text('$y'),
+                        );
+                      }),
+                    ],
+                    onChanged: (val) {
+                      ref.read(billYearFilterProvider.notifier).state = val;
+                    },
+                  ),
+                ),
+                if (selectedMonth != null || selectedYear != null) ...[
+                  const SizedBox(width: 4),
+                  IconButton(
+                    icon: const Icon(Icons.clear, size: 20, color: Colors.red),
+                    tooltip: 'Reset Period Filter',
+                    onPressed: () {
+                      ref.read(billMonthFilterProvider.notifier).state = null;
+                      ref.read(billYearFilterProvider.notifier).state = null;
+                    },
+                  ),
+                ],
+              ],
+            ),
+          ),
+
+          // Status Filter Chips
           SingleChildScrollView(
             scrollDirection: Axis.horizontal,
             padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
@@ -60,7 +141,7 @@ class BillListScreen extends ConsumerWidget {
                   return EmptyStateView(
                     icon: Icons.receipt_long_outlined,
                     title: 'No Bills Found',
-                    message: 'No bills match the selected filter for ${DateHelper.formatBillingPeriod(period.month, period.year)}.',
+                    message: 'No bills match the selected filter ($periodSubtitle).',
                     buttonText: 'Generate Bills',
                     onAction: () => context.push('/bills/generate'),
                   );

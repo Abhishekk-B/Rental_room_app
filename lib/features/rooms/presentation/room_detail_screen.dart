@@ -54,9 +54,6 @@ class _RoomDetailScreenState extends ConsumerState<RoomDetailScreen> {
     final billsAsync = ref.watch(roomBillsProvider(widget.roomId));
     final paymentsAsync = ref.watch(roomPaymentsProvider(widget.roomId));
 
-    final allBills = billsAsync.valueOrNull ?? [];
-    final hasGeneratedBills = allBills.isNotEmpty;
-
     return Scaffold(
       appBar: AppBar(
         title: const Text('Room Details'),
@@ -140,26 +137,13 @@ class _RoomDetailScreenState extends ConsumerState<RoomDetailScreen> {
                           subtitle: Text('Agreed Rent: ${CurrencyHelper.formatPaise(room.agreedRentPaise ?? room.defaultRentPaise)}'),
                         ),
                         const SizedBox(height: 8),
-                        Row(
-                          children: [
-                            Expanded(
-                              child: FilledButton.icon(
-                                onPressed: () => context.push('/bills/generate?roomId=${room.id}'),
-                                icon: const Icon(Icons.receipt_long, size: 18),
-                                label: const Text('Generate Bill'),
-                              ),
-                            ),
-                            if (hasGeneratedBills) ...[
-                              const SizedBox(width: 8),
-                              Expanded(
-                                child: OutlinedButton.icon(
-                                  onPressed: () => context.push('/payments/record?tenancyId=${room.activeTenancyId}&roomId=${room.id}'),
-                                  icon: const Icon(Icons.payment, size: 18),
-                                  label: const Text('Record Payment'),
-                                ),
-                              ),
-                            ],
-                          ],
+                        SizedBox(
+                          width: double.infinity,
+                          child: FilledButton.icon(
+                            onPressed: () => context.push('/bills/generate?roomId=${room.id}'),
+                            icon: const Icon(Icons.receipt_long, size: 18),
+                            label: const Text('Generate Bill'),
+                          ),
                         ),
                       ] else ...[
                         const Text('This room is currently vacant.', style: TextStyle(color: Colors.grey)),

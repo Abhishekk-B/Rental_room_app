@@ -56,7 +56,71 @@ class DashboardScreen extends ConsumerWidget {
               _buildOccupancyBanner(context, summary),
               const SizedBox(height: 16),
 
-              // MANDATORY ADVANCE & SECURITY DEPOSIT ACCOUNTS SECTION
+              // General Collections & Month Overview
+              Text(
+                'COLLECTIONS OVERVIEW (${DateHelper.formatShortBillingPeriod(period.month, period.year)})',
+                style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13, color: Colors.grey.shade700, letterSpacing: 0.5),
+              ),
+              const SizedBox(height: 8),
+
+              Row(
+                children: [
+                  Expanded(
+                    child: StatCard(
+                      title: 'Payments Received',
+                      value: CurrencyHelper.formatPaise(summary.totalPaymentsReceivedPaise),
+                      icon: Icons.check_circle_outline,
+                      color: AppColors.success,
+                      onTap: () => context.push('/payments'),
+                    ),
+                  ),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: StatCard(
+                      title: 'Total Dues Pending',
+                      value: CurrencyHelper.formatPaise(summary.totalOutstandingDuesPaise),
+                      icon: Icons.warning_amber_rounded,
+                      color: summary.totalOutstandingDuesPaise > 0 ? AppColors.error : AppColors.success,
+                      onTap: () => context.push('/bills'),
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 20),
+
+              // MANDATORY OUTSTANDING DUES BREAKDOWN
+              Text(
+                'OUTSTANDING DUES BREAKDOWN',
+                style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13, color: Colors.grey.shade700, letterSpacing: 0.5),
+              ),
+              const SizedBox(height: 8),
+
+              Row(
+                children: [
+                  Expanded(
+                    child: StatCard(
+                      title: 'Outstanding Rent',
+                      value: CurrencyHelper.formatPaise(summary.totalOutstandingRentPaise),
+                      icon: Icons.home_work_outlined,
+                      color: summary.totalOutstandingRentPaise > 0 ? AppColors.error : AppColors.success,
+                      onTap: () => context.push('/bills'),
+                    ),
+                  ),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: StatCard(
+                      title: 'Outstanding Electricity',
+                      value: CurrencyHelper.formatPaise(summary.totalOutstandingElectricityPaise),
+                      icon: Icons.power_outlined,
+                      color: summary.totalOutstandingElectricityPaise > 0 ? Colors.deepOrange : AppColors.success,
+                      onTap: () => context.push('/bills'),
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 20),
+
+              // MANDATORY ADVANCE & SECURITY DEPOSIT ACCOUNTS SECTION (Moved below Collections Overview)
               Text(
                 'ADVANCE & SECURITY DEPOSIT LEDGERS',
                 style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13, color: Colors.grey.shade700, letterSpacing: 0.5),
@@ -97,70 +161,6 @@ class DashboardScreen extends ConsumerWidget {
                 icon: Icons.shield_outlined,
                 color: Colors.indigo.shade700,
                 onTap: () => context.push('/tenants'),
-              ),
-              const SizedBox(height: 20),
-
-              // MANDATORY OUTSTANDING DUES BREAKDOWN
-              Text(
-                'OUTSTANDING DUES BREAKDOWN',
-                style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13, color: Colors.grey.shade700, letterSpacing: 0.5),
-              ),
-              const SizedBox(height: 8),
-
-              Row(
-                children: [
-                  Expanded(
-                    child: StatCard(
-                      title: 'Outstanding Rent',
-                      value: CurrencyHelper.formatPaise(summary.totalOutstandingRentPaise),
-                      icon: Icons.home_work_outlined,
-                      color: summary.totalOutstandingRentPaise > 0 ? AppColors.error : AppColors.success,
-                      onTap: () => context.push('/bills'),
-                    ),
-                  ),
-                  const SizedBox(width: 10),
-                  Expanded(
-                    child: StatCard(
-                      title: 'Outstanding Electricity',
-                      value: CurrencyHelper.formatPaise(summary.totalOutstandingElectricityPaise),
-                      icon: Icons.power_outlined,
-                      color: summary.totalOutstandingElectricityPaise > 0 ? Colors.deepOrange : AppColors.success,
-                      onTap: () => context.push('/bills'),
-                    ),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 20),
-
-              // General Collections & Month Overview
-              Text(
-                'COLLECTIONS OVERVIEW (${DateHelper.formatShortBillingPeriod(period.month, period.year)})',
-                style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13, color: Colors.grey.shade700, letterSpacing: 0.5),
-              ),
-              const SizedBox(height: 8),
-
-              Row(
-                children: [
-                  Expanded(
-                    child: StatCard(
-                      title: 'Payments Received',
-                      value: CurrencyHelper.formatPaise(summary.totalPaymentsReceivedPaise),
-                      icon: Icons.check_circle_outline,
-                      color: AppColors.success,
-                      onTap: () => context.push('/payments'),
-                    ),
-                  ),
-                  const SizedBox(width: 10),
-                  Expanded(
-                    child: StatCard(
-                      title: 'Total Dues Pending',
-                      value: CurrencyHelper.formatPaise(summary.totalOutstandingDuesPaise),
-                      icon: Icons.warning_amber_rounded,
-                      color: summary.totalOutstandingDuesPaise > 0 ? AppColors.error : AppColors.success,
-                      onTap: () => context.push('/bills'),
-                    ),
-                  ),
-                ],
               ),
               const SizedBox(height: 20),
 

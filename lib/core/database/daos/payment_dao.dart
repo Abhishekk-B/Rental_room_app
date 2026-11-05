@@ -190,6 +190,58 @@ class PaymentDao {
           whereArgs: [billId],
         );
       }
+
+      // If extra rent was paid exceeding bill requirements, credit to Rent Advance
+      if (unallocatedRent > 0) {
+        final advId = 'adv_${now}_rent';
+        await txn.insert(DatabaseTables.advanceLedgerEntries, {
+          'id': advId,
+          'tenancy_id': tenancyId,
+          'account_type': 'RENT_ADVANCE',
+          'transaction_type': 'CREDIT_RECEIVED',
+          'amount_paise': unallocatedRent,
+          'monthly_bill_id': specificBillId,
+          'payment_id': paymentId,
+          'description': 'Advance credited from excess rent payment ($receiptNumber)',
+          'entry_date_epoch': paymentDateEpoch,
+          'created_at_epoch': now,
+        });
+      }
+
+      // If extra electricity was paid exceeding bill requirements, credit to Electricity Advance
+      if (unallocatedElec > 0) {
+        final advId = 'adv_${now}_elec';
+        await txn.insert(DatabaseTables.advanceLedgerEntries, {
+          'id': advId,
+          'tenancy_id': tenancyId,
+          'account_type': 'ELECTRICITY_ADVANCE',
+          'transaction_type': 'CREDIT_RECEIVED',
+          'amount_paise': unallocatedElec,
+          'monthly_bill_id': specificBillId,
+          'payment_id': paymentId,
+          'description': 'Advance credited from excess electricity payment ($receiptNumber)',
+          'entry_date_epoch': paymentDateEpoch,
+          'created_at_epoch': now,
+        });
+      }
+
+      // If unitemized total exceeded bills
+      final remainingExcess = unallocatedTotal - (unallocatedRent + unallocatedElec);
+      if (remainingExcess > 0) {
+        final advId = 'adv_${now}_gen';
+        await txn.insert(DatabaseTables.advanceLedgerEntries, {
+          'id': advId,
+          'tenancy_id': tenancyId,
+          'account_type': 'RENT_ADVANCE',
+          'transaction_type': 'CREDIT_RECEIVED',
+          'amount_paise': remainingExcess,
+          'monthly_bill_id': specificBillId,
+          'payment_id': paymentId,
+          'description': 'Advance credited from excess payment ($receiptNumber)',
+          'entry_date_epoch': paymentDateEpoch,
+          'created_at_epoch': now,
+        });
+      }
     });
 
     return receiptNumber;

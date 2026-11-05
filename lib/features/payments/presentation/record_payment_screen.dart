@@ -4,6 +4,7 @@ import 'package:go_router/go_router.dart';
 import '../../../core/constants/app_colors.dart';
 import '../../../core/utils/currency_helper.dart';
 import '../../../core/utils/date_helper.dart';
+import '../../advances/providers/advance_provider.dart';
 import '../../billing/providers/billing_provider.dart';
 import '../../dashboard/providers/dashboard_provider.dart';
 import '../../rooms/providers/rooms_provider.dart';
@@ -44,6 +45,9 @@ class _RecordPaymentScreenState extends ConsumerState<RecordPaymentScreen> {
   DateTime _paymentDate = DateTime.now();
   bool _isLoading = false;
 
+  int _expectedRentPaise = 0;
+  int _expectedElecPaise = 0;
+
   @override
   void initState() {
     super.initState();
@@ -51,12 +55,12 @@ class _RecordPaymentScreenState extends ConsumerState<RecordPaymentScreen> {
     _paymentMethod = 'CASH';
 
     if (widget.prefilledRentAmountPaise != null) {
-      final rentPaise = int.tryParse(widget.prefilledRentAmountPaise!) ?? 0;
-      _rentAmountCtrl.text = CurrencyHelper.paiseToRupeesString(rentPaise);
+      _expectedRentPaise = int.tryParse(widget.prefilledRentAmountPaise!) ?? 0;
+      _rentAmountCtrl.text = CurrencyHelper.paiseToRupeesString(_expectedRentPaise);
     }
     if (widget.prefilledElecAmountPaise != null) {
-      final elecPaise = int.tryParse(widget.prefilledElecAmountPaise!) ?? 0;
-      _elecAmountCtrl.text = CurrencyHelper.paiseToRupeesString(elecPaise);
+      _expectedElecPaise = int.tryParse(widget.prefilledElecAmountPaise!) ?? 0;
+      _elecAmountCtrl.text = CurrencyHelper.paiseToRupeesString(_expectedElecPaise);
     }
 
     if (widget.prefilledRentAmountPaise == null && widget.prefilledElecAmountPaise == null && widget.prefilledAmountPaise != null) {
@@ -127,6 +131,9 @@ class _RecordPaymentScreenState extends ConsumerState<RecordPaymentScreen> {
       ref.invalidate(paymentsListProvider);
       ref.invalidate(billsListProvider);
       ref.invalidate(dashboardSummaryProvider);
+      if (_selectedTenancyId != null) {
+        ref.invalidate(tenancyAdvancesProvider(_selectedTenancyId!));
+      }
 
       String? targetRoomId = widget.preselectedRoomId;
       if (targetRoomId == null && _selectedTenancyId != null) {
@@ -253,6 +260,11 @@ class _RecordPaymentScreenState extends ConsumerState<RecordPaymentScreen> {
                         ),
                       ],
                     ),
+                    _buildAdjustmentNotice(
+                      enteredPaise: CurrencyHelper.parseRupeesToPaise(_rentAmountCtrl.text),
+                      expectedPaise: _expectedRentPaise,
+                      categoryName: 'Rent',
+                    ),
                     const SizedBox(height: 16),
 
                     // 2. Electricity Amount
@@ -288,6 +300,11 @@ class _RecordPaymentScreenState extends ConsumerState<RecordPaymentScreen> {
                           ),
                         ),
                       ],
+                    ),
+                    _buildAdjustmentNotice(
+                      enteredPaise: CurrencyHelper.parseRupeesToPaise(_elecAmountCtrl.text),
+                      expectedPaise: _expectedElecPaise,
+                      categoryName: 'Electricity',
                     ),
                     const SizedBox(height: 16),
 
@@ -395,5 +412,77 @@ class _RecordPaymentScreenState extends ConsumerState<RecordPaymentScreen> {
         ),
       ),
     );
+  }
+
+  Widget _buildAdjustmentNotice({
+    required int enteredPaise,
+    required int expectedPaise,
+    required String categoryName,
+  }) {
+    if (expectedPaise <= 0) return const SizedBox.shrink();
+
+    final diff = enteredPaise - expectedPaise;
+    if (diff > 0) {
+      // Extra / Advance
+      return Container(
+        margin: const EdgeInsets.only(top: 6),
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+        decoration: BoxDecoration(
+          color: Colors.teal.shade50,
+          borderRadius: BorderRadius.circular(6),
+          border: Border.all(color: Colors.teal.shade200),
+        ),
+        child: Row(
+          children: [
+            Icon(Icons.arrow_upward, size: 16, color: Colors.teal.shade800),
+            const SizedBox(width: 6),
+            Expanded(
+              child: Text(
+                'Extra: +${CurrencyHelper.formatPaise(diff)} (Will be credited to $categoryName Advance)',
+                style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: Colors.teal.shade900),
+              ),
+            ),
+          ],
+        ),
+      );
+    } else if (diff < 0) {
+      // Deficit
+      return Container(
+        margin: const EdgeInsets.only(top: 6),
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+        decoration: BoxDecoration(
+          color: Colors.orange.shade50,
+          borderRadius: BorderRadius.circular(6),
+          border: Border.all(color: Colors.orange.shade300),
+        ),
+        child: Row(
+          children: [
+            Icon(Icons.arrow_downward, size: 16, color: Colors.deepOrange.shade800),
+            const SizedBox(width: 6),
+            Expanded(
+              child: Text(
+                'Deficit: -${CurrencyHelper.formatPaise(-diff)} (Will remain as unpaid bill balance)',
+                style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: Colors.deepOrange.shade900),
+              ),
+            ),
+          ],
+        ),
+      );
+    } else {
+      // Exact match
+      return Padding(
+        padding: const EdgeInsets.only(top: 4, left: 4),
+        child: Row(
+          children: [
+            Icon(Icons.check_circle, size: 14, color: Colors.green.shade700),
+            const SizedBox(width: 4),
+            Text(
+              'Matches bill balance (${CurrencyHelper.formatPaise(expectedPaise)})',
+              style: TextStyle(fontSize: 11, color: Colors.green.shade800, fontWeight: FontWeight.w500),
+            ),
+          ],
+        ),
+      );
+    }
   }
 }
