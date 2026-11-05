@@ -43,7 +43,7 @@ class RentPulseApp extends StatelessWidget {
           backgroundColor: AppColors.background,
           foregroundColor: AppColors.onBackground,
         ),
-        cardTheme: CardTheme(
+        cardTheme: CardThemeData(
           color: AppColors.surface,
           elevation: 0,
           shape: RoundedRectangleBorder(

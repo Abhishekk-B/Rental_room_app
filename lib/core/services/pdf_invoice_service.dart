@@ -6,6 +6,7 @@ import '../utils/currency_helper.dart';
 import '../utils/date_helper.dart';
 import '../database/daos/billing_dao.dart';
 import '../database/daos/payment_dao.dart';
+import '../../features/billing/domain/billing_engine.dart';
 
 class PdfInvoiceService {
   /// Generates a professional PDF monthly invoice
@@ -152,7 +153,7 @@ class PdfInvoiceService {
                     ],
                   ),
                   ...bill.lineItems.map(
-                    (item) => pw.TableRow(
+                    (LineItemInput item) => pw.TableRow(
                       children: [
                         pw.Padding(
                           padding: const pw.EdgeInsets.all(8),

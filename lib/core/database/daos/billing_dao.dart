@@ -1,7 +1,7 @@
 import 'package:sqflite/sqflite.dart';
 import '../app_database.dart';
 import '../tables.dart';
-import '../../billing/domain/billing_engine.dart';
+import 'package:rental_room_app/features/billing/domain/billing_engine.dart';
 
 class MonthlyBillRecord {
   final String id;

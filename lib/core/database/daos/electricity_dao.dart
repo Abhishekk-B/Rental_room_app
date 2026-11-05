@@ -1,7 +1,7 @@
 import 'package:sqflite/sqflite.dart';
 import '../app_database.dart';
 import '../tables.dart';
-import '../../electricity/domain/electricity_calculator.dart';
+import 'package:rental_room_app/features/electricity/domain/electricity_calculator.dart';
 
 class MeterReadingRecord {
   final String id;

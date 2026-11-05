@@ -1,3 +1,4 @@
+import 'package:sqflite/sqflite.dart';
 import '../app_database.dart';
 import '../tables.dart';
 
