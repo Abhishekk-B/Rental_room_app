@@ -224,11 +224,15 @@ class _AssignTenancyScreenState extends ConsumerState<AssignTenancyScreen> {
               keyboardType: TextInputType.number,
               decoration: const InputDecoration(
                 labelText: 'Agreed Monthly Rent (₹) *',
-                hintText: 'e.g. 8500',
+                hintText: 'e.g. 8500 (0 if rent-free)',
                 border: OutlineInputBorder(),
                 prefixIcon: Icon(Icons.currency_rupee),
               ),
-              validator: (v) => (v == null || CurrencyHelper.parseRupeesToPaise(v) <= 0) ? 'Enter valid rent' : null,
+              validator: (v) {
+                if (v == null || v.trim().isEmpty) return 'Enter agreed rent (or 0)';
+                if (CurrencyHelper.parseRupeesToPaise(v) < 0) return 'Cannot be negative';
+                return null;
+              },
             ),
             const SizedBox(height: 16),
 

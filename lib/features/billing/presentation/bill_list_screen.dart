@@ -188,39 +188,87 @@ class BillListScreen extends ConsumerWidget {
                                     StatusBadge(status: bill.status),
                                   ],
                                 ),
-                                const SizedBox(height: 12),
-                                const Divider(height: 1),
                                 const SizedBox(height: 10),
+                                // Quick View Breakdown (Rent, Electricity, Balance)
+                                Container(
+                                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                                  decoration: BoxDecoration(
+                                    color: AppColors.surfaceVariant.withOpacity(0.35),
+                                    borderRadius: BorderRadius.circular(10),
+                                  ),
+                                  child: Row(
+                                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                                    children: [
+                                      // Rent Amount
+                                      Column(
+                                        crossAxisAlignment: CrossAxisAlignment.start,
+                                        children: [
+                                          Row(
+                                            children: const [
+                                              Icon(Icons.home_outlined, size: 14, color: Colors.grey),
+                                              SizedBox(width: 3),
+                                              Text('Rent', style: TextStyle(fontSize: 11, color: Colors.grey)),
+                                            ],
+                                          ),
+                                          const SizedBox(height: 2),
+                                          Text(
+                                            CurrencyHelper.formatPaise(bill.rentAmountPaise),
+                                            style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
+                                          ),
+                                        ],
+                                      ),
+
+                                      // Electricity Amount
+                                      Column(
+                                        crossAxisAlignment: CrossAxisAlignment.start,
+                                        children: [
+                                          Row(
+                                            children: const [
+                                              Icon(Icons.bolt, size: 14, color: Colors.amber),
+                                              SizedBox(width: 3),
+                                              Text('Electricity', style: TextStyle(fontSize: 11, color: Colors.grey)),
+                                            ],
+                                          ),
+                                          const SizedBox(height: 2),
+                                          Text(
+                                            CurrencyHelper.formatPaise(bill.electricityAmountPaise),
+                                            style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
+                                          ),
+                                        ],
+                                      ),
+
+                                      // Remaining Balance
+                                      Column(
+                                        crossAxisAlignment: CrossAxisAlignment.end,
+                                        children: [
+                                          const Text('Balance Due', style: TextStyle(fontSize: 11, color: Colors.grey)),
+                                          const SizedBox(height: 2),
+                                          Text(
+                                            CurrencyHelper.formatPaise(bill.remainingBalancePaise),
+                                            style: TextStyle(
+                                              fontSize: 14,
+                                              fontWeight: FontWeight.bold,
+                                              color: bill.remainingBalancePaise > 0 ? AppColors.error : AppColors.success,
+                                            ),
+                                          ),
+                                        ],
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                                const SizedBox(height: 8),
                                 Row(
                                   mainAxisAlignment: MainAxisAlignment.spaceBetween,
                                   children: [
-                                    Column(
-                                      crossAxisAlignment: CrossAxisAlignment.start,
-                                      children: [
-                                        Text('Total Due: ${CurrencyHelper.formatPaise(bill.totalDuePaise)}',
-                                            style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600)),
-                                        Text('Due: ${DateHelper.formatEpoch(bill.dueDateEpoch)}',
-                                            style: const TextStyle(fontSize: 11, color: Colors.grey)),
-                                      ],
+                                    Text(
+                                      '${bill.billNumber} • Due: ${DateHelper.formatEpoch(bill.dueDateEpoch)}',
+                                      style: const TextStyle(fontSize: 11, color: Colors.grey),
                                     ),
-                                    Column(
-                                      crossAxisAlignment: CrossAxisAlignment.end,
-                                      children: [
-                                        Text(
-                                          'Balance: ${CurrencyHelper.formatPaise(bill.remainingBalancePaise)}',
-                                          style: TextStyle(
-                                            fontSize: 14,
-                                            fontWeight: FontWeight.bold,
-                                            color: bill.remainingBalancePaise > 0 ? AppColors.error : AppColors.success,
-                                          ),
-                                        ),
-                                        if (bill.amountPaidPaise > 0)
-                                          Text(
-                                            'Paid: ${CurrencyHelper.formatPaise(bill.amountPaidPaise)}',
-                                            style: const TextStyle(fontSize: 11, color: Colors.green),
-                                          ),
-                                      ],
-                                    ),
+                                    if (bill.amountPaidPaise > 0)
+                                      Text(
+                                        'Paid: ${CurrencyHelper.formatPaise(bill.amountPaidPaise)}',
+                                        style: const TextStyle(fontSize: 11, color: Colors.green, fontWeight: FontWeight.w600),
+                                      ),
                                   ],
                                 ),
                               ],

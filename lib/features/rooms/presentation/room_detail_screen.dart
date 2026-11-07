@@ -103,7 +103,10 @@ class _RoomDetailScreenState extends ConsumerState<RoomDetailScreen> {
                         ),
                       ],
                       const Divider(height: 24),
-                      _buildDetailRow('Default Rent', CurrencyHelper.formatPaise(room.defaultRentPaise)),
+                      _buildDetailRow(
+                        'Default Rent',
+                        room.defaultRentPaise == 0 ? '₹0 (Rent-Free)' : CurrencyHelper.formatPaise(room.defaultRentPaise),
+                      ),
                       _buildDetailRow('Electricity Rate', '${CurrencyHelper.formatPaise(room.electricityRatePaise)} / unit'),
                       _buildDetailRow('Sub-Meter', room.meterNumber ?? 'Not Configured'),
                       if (room.latestReadingCentiunits != null)
@@ -134,17 +137,66 @@ class _RoomDetailScreenState extends ConsumerState<RoomDetailScreen> {
                             child: Icon(Icons.person, color: AppColors.primary),
                           ),
                           title: Text(room.activeTenantName ?? 'Tenant', style: const TextStyle(fontWeight: FontWeight.bold)),
-                          subtitle: Text('Agreed Rent: ${CurrencyHelper.formatPaise(room.agreedRentPaise ?? room.defaultRentPaise)}'),
-                        ),
-                        const SizedBox(height: 8),
-                        SizedBox(
-                          width: double.infinity,
-                          child: FilledButton.icon(
-                            onPressed: () => context.push('/bills/generate?roomId=${room.id}'),
-                            icon: const Icon(Icons.receipt_long, size: 18),
-                            label: const Text('Generate Bill'),
+                          subtitle: Text(
+                            (room.agreedRentPaise ?? room.defaultRentPaise) == 0
+                                ? 'Agreed Rent: ₹0 (Rent-Free Tenancy)'
+                                : 'Agreed Rent: ${CurrencyHelper.formatPaise(room.agreedRentPaise ?? room.defaultRentPaise)}',
                           ),
                         ),
+                        const SizedBox(height: 8),
+                        if ((room.agreedRentPaise ?? room.defaultRentPaise) == 0) ...[
+                          Container(
+                            width: double.infinity,
+                            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                            decoration: BoxDecoration(
+                              color: Colors.blue.shade50,
+                              borderRadius: BorderRadius.circular(8),
+                              border: Border.all(color: Colors.blue.shade200),
+                            ),
+                            child: Row(
+                              children: [
+                                Icon(Icons.info_outline, size: 18, color: Colors.blue.shade800),
+                                const SizedBox(width: 8),
+                                Expanded(
+                                  child: Text(
+                                    (room.meterNumber != null && room.meterNumber!.trim().isNotEmpty)
+                                        ? 'Rent-Free Room: No rent required. Electricity bills can be generated below.'
+                                        : 'Rent-Free Room: Monthly bills and payment recording are not required.',
+                                    style: TextStyle(fontSize: 12, color: Colors.blue.shade900, fontWeight: FontWeight.w500),
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                          const SizedBox(height: 8),
+                          if (room.meterNumber != null && room.meterNumber!.trim().isNotEmpty) ...[
+                            SizedBox(
+                              width: double.infinity,
+                              child: FilledButton.icon(
+                                onPressed: () => context.push('/bills/generate?roomId=${room.id}'),
+                                icon: const Icon(Icons.bolt, size: 18),
+                                label: const Text('Generate Electricity Bill'),
+                              ),
+                            ),
+                          ] else ...[
+                            Center(
+                              child: TextButton.icon(
+                                onPressed: () => context.push('/bills/generate?roomId=${room.id}'),
+                                icon: const Icon(Icons.receipt_long, size: 16),
+                                label: const Text('Generate Bill (Optional)'),
+                              ),
+                            ),
+                          ],
+                        ] else ...[
+                          SizedBox(
+                            width: double.infinity,
+                            child: FilledButton.icon(
+                              onPressed: () => context.push('/bills/generate?roomId=${room.id}'),
+                              icon: const Icon(Icons.receipt_long, size: 18),
+                              label: const Text('Generate Bill'),
+                            ),
+                          ),
+                        ],
                       ] else ...[
                         const Text('This room is currently vacant.', style: TextStyle(color: Colors.grey)),
                         const SizedBox(height: 12),

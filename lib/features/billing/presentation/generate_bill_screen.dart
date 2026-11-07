@@ -523,8 +523,8 @@ class _GenerateBillScreenState extends ConsumerState<GenerateBillScreen> {
                         border: OutlineInputBorder(),
                       ),
                       validator: (v) {
-                        if (v == null || v.isEmpty) return 'Rent amount required';
-                        if (CurrencyHelper.parseRupeesToPaise(v) <= 0) return 'Must be greater than 0';
+                        if (v == null || v.trim().isEmpty) return 'Rent amount required (or 0)';
+                        if (CurrencyHelper.parseRupeesToPaise(v) < 0) return 'Cannot be negative';
                         return null;
                       },
                       onChanged: (_) => setState(() {}),

@@ -225,13 +225,13 @@ class _AddEditRoomScreenState extends ConsumerState<AddEditRoomScreen> {
                     keyboardType: TextInputType.number,
                     decoration: const InputDecoration(
                       labelText: 'Monthly Rent (₹) *',
-                      hintText: 'e.g. 5000',
+                      hintText: 'e.g. 5000 (0 if rent-free)',
                       prefixText: '₹ ',
                       border: OutlineInputBorder(),
                     ),
                     validator: (v) {
                       if (v == null || v.trim().isEmpty) return 'Required';
-                      if (CurrencyHelper.parseRupeesToPaise(v) <= 0) return 'Enter valid amount';
+                      if (CurrencyHelper.parseRupeesToPaise(v) < 0) return 'Cannot be negative';
                       return null;
                     },
                   ),

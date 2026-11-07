@@ -160,7 +160,11 @@ class TenantDetailScreen extends ConsumerWidget {
                           style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 15),
                         ),
                         const SizedBox(height: 4),
-                        Text('Agreed Monthly Rent: ${CurrencyHelper.formatPaise(tenant.agreedRentPaise ?? 0)}/mo'),
+                        Text(
+                          (tenant.agreedRentPaise ?? 0) == 0
+                              ? 'Agreed Monthly Rent: ₹0 (Rent-Free)'
+                              : 'Agreed Monthly Rent: ${CurrencyHelper.formatPaise(tenant.agreedRentPaise ?? 0)}/mo',
+                        ),
                         const SizedBox(height: 16),
                         Row(
                           children: [
