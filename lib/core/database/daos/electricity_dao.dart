@@ -176,6 +176,32 @@ class ElectricityDao {
     return result.map((row) => MeterReadingRecord.fromMap(row)).toList();
   }
 
+  /// Retrieves a specific room's meter reading for a given billing month and year
+  Future<MeterReadingRecord?> getReadingForRoomAndPeriod({
+    required String roomId,
+    required int month,
+    required int year,
+  }) async {
+    final db = await _dbProvider.database;
+    final query = '''
+      SELECT 
+        mr.*,
+        r.room_number
+      FROM ${DatabaseTables.meterReadings} mr
+      JOIN ${DatabaseTables.meters} m ON mr.meter_id = m.id
+      JOIN ${DatabaseTables.rooms} r ON m.room_id = r.id
+      WHERE r.id = ? AND mr.billing_month = ? AND mr.billing_year = ?
+      ORDER BY mr.reading_date_epoch DESC
+      LIMIT 1;
+    ''';
+
+    final result = await db.rawQuery(query, [roomId, month, year]);
+    if (result.isNotEmpty) {
+      return MeterReadingRecord.fromMap(result.first);
+    }
+    return null;
+  }
+
   /// Commits master electricity bill and creates room allocations transactionally
   Future<void> saveMasterBillAndAllocations({
     required String billId,

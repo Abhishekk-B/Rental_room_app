@@ -9,6 +9,8 @@ import '../../../core/utils/date_helper.dart';
 import '../../../core/widgets/confirm_dialog.dart';
 import '../../../core/widgets/status_badge.dart';
 import '../../dashboard/providers/dashboard_provider.dart';
+import '../../electricity/providers/electricity_provider.dart';
+import '../../rooms/providers/rooms_provider.dart';
 import '../providers/billing_provider.dart';
 
 class BillDetailScreen extends ConsumerStatefulWidget {
@@ -23,7 +25,7 @@ class BillDetailScreen extends ConsumerStatefulWidget {
 class _BillDetailScreenState extends ConsumerState<BillDetailScreen> {
   bool _isExporting = false;
 
-  Future<void> _sharePdf(MonthlyBillRecord bill) async {
+  Future<void> _shareFullPdf(MonthlyBillRecord bill) async {
     setState(() => _isExporting = true);
     try {
       final pdfBytes = await PdfInvoiceService.generateMonthlyBillPdf(bill: bill);
@@ -35,6 +37,117 @@ class _BillDetailScreenState extends ConsumerState<BillDetailScreen> {
     } finally {
       if (mounted) setState(() => _isExporting = false);
     }
+  }
+
+  Future<void> _shareElectricityPdf(MonthlyBillRecord bill) async {
+    setState(() => _isExporting = true);
+    try {
+      final elecDao = ref.read(electricityDaoProvider);
+      final roomDao = ref.read(roomDaoProvider);
+
+      final readingRecord = await elecDao.getReadingForRoomAndPeriod(
+        roomId: bill.roomId,
+        month: bill.billingMonth,
+        year: bill.billingYear,
+      );
+      final room = await roomDao.getRoomById(bill.roomId);
+
+      int prevReading = readingRecord?.previousReadingCentiunits ?? 0;
+      int currReading = readingRecord?.currentReadingCentiunits ?? 0;
+      int unitsConsumed = readingRecord?.unitsConsumedCentiunits ?? bill.electricityUnitsCentiunits;
+
+      if (readingRecord == null) {
+        unitsConsumed = bill.electricityUnitsCentiunits;
+        currReading = room?.latestReadingCentiunits ?? unitsConsumed;
+        prevReading = (currReading - unitsConsumed).clamp(0, currReading);
+      }
+
+      final ratePaise = unitsConsumed > 0
+          ? ((bill.electricityAmountPaise * 100) ~/ unitsConsumed)
+          : (room?.electricityRatePaise ?? 1000);
+
+      final pdfBytes = await PdfInvoiceService.generateElectricityBillPdf(
+        bill: bill,
+        previousReadingCentiunits: prevReading,
+        currentReadingCentiunits: currReading,
+        unitsConsumedCentiunits: unitsConsumed,
+        ratePerUnitPaise: ratePaise,
+        subMeterNumber: room?.meterNumber ?? 'Sub-Meter',
+      );
+
+      await PdfInvoiceService.sharePdf(pdfBytes, 'ELEC-${bill.billNumber}.pdf');
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Failed to share Electricity PDF: $e')));
+      }
+    } finally {
+      if (mounted) setState(() => _isExporting = false);
+    }
+  }
+
+  void _showShareOptions(MonthlyBillRecord bill) {
+    final hasElectricity = bill.electricityAmountPaise > 0 || bill.electricityUnitsCentiunits > 0;
+
+    if (!hasElectricity) {
+      _shareFullPdf(bill);
+      return;
+    }
+
+    showModalBottomSheet(
+      context: context,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (ctx) {
+        return SafeArea(
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 20),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: const [
+                    Icon(Icons.print, color: AppColors.primary),
+                    SizedBox(width: 8),
+                    Text(
+                      'Choose Invoice / Receipt to Print or Share',
+                      style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 16),
+                ListTile(
+                  leading: const CircleAvatar(
+                    backgroundColor: AppColors.primaryContainer,
+                    child: Icon(Icons.receipt_long, color: AppColors.primary),
+                  ),
+                  title: const Text('Full Monthly Invoice (Rent + Electricity)', style: TextStyle(fontWeight: FontWeight.bold)),
+                  subtitle: const Text('Complete invoice with rent, electricity, previous dues & total balance.'),
+                  onTap: () {
+                    Navigator.pop(ctx);
+                    _shareFullPdf(bill);
+                  },
+                ),
+                const Divider(),
+                ListTile(
+                  leading: CircleAvatar(
+                    backgroundColor: Colors.amber.shade100,
+                    child: Icon(Icons.bolt, color: Colors.orange.shade900),
+                  ),
+                  title: const Text('Electricity-Only Receipt (No Rent)', style: TextStyle(fontWeight: FontWeight.bold)),
+                  subtitle: const Text('Shows previous/current units, units consumed, advance applied & net electricity bill.'),
+                  onTap: () {
+                    Navigator.pop(ctx);
+                    _shareElectricityPdf(bill);
+                  },
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
   }
 
   Future<void> _deleteBill() async {
@@ -179,12 +292,18 @@ class _BillDetailScreenState extends ConsumerState<BillDetailScreen> {
                         tooltip: 'Edit Bill Amount',
                         onPressed: () => _showEditBillDialog(bill),
                       ),
+                      if (bill.electricityAmountPaise > 0 || bill.electricityUnitsCentiunits > 0)
+                        IconButton(
+                          icon: const Icon(Icons.bolt, color: Colors.amber),
+                          tooltip: 'Electricity Only Receipt',
+                          onPressed: _isExporting ? null : () => _shareElectricityPdf(bill),
+                        ),
                       IconButton(
                         icon: _isExporting
                             ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2))
                             : const Icon(Icons.share_outlined),
                         tooltip: 'Share PDF Invoice',
-                        onPressed: () => _sharePdf(bill),
+                        onPressed: () => _showShareOptions(bill),
                       ),
                       IconButton(
                         icon: const Icon(Icons.delete_outline, color: Colors.red),
@@ -278,17 +397,42 @@ class _BillDetailScreenState extends ConsumerState<BillDetailScreen> {
                   separatorBuilder: (_, __) => const Divider(height: 1),
                   itemBuilder: (context, index) {
                     final item = bill.lineItems[index];
-                    return ListTile(
-                      title: Text(item.description, style: const TextStyle(fontSize: 14)),
-                      subtitle: Text(item.category, style: const TextStyle(fontSize: 11, color: Colors.grey)),
-                      trailing: Text(
-                        CurrencyHelper.formatPaise(item.amountPaise, showDecimals: true),
-                        style: TextStyle(
-                          fontWeight: FontWeight.w600,
-                          fontSize: 14,
-                          color: item.amountPaise < 0 ? Colors.green.shade700 : null,
+                    final isElec = item.category == 'ELECTRICITY';
+
+                    return Column(
+                      children: [
+                        ListTile(
+                          title: Text(item.description, style: const TextStyle(fontSize: 14)),
+                          subtitle: Text(item.category, style: const TextStyle(fontSize: 11, color: Colors.grey)),
+                          trailing: Text(
+                            CurrencyHelper.formatPaise(item.amountPaise, showDecimals: true),
+                            style: TextStyle(
+                              fontWeight: FontWeight.w600,
+                              fontSize: 14,
+                              color: item.amountPaise < 0 ? Colors.green.shade700 : null,
+                            ),
+                          ),
                         ),
-                      ),
+                        if (isElec)
+                          Padding(
+                            padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+                            child: Row(
+                              mainAxisAlignment: MainAxisAlignment.end,
+                              children: [
+                                OutlinedButton.icon(
+                                  style: OutlinedButton.styleFrom(
+                                    visualDensity: VisualDensity.compact,
+                                    foregroundColor: Colors.deepOrange.shade800,
+                                    side: BorderSide(color: Colors.orange.shade300),
+                                  ),
+                                  onPressed: () => _shareElectricityPdf(bill),
+                                  icon: const Icon(Icons.bolt, size: 16),
+                                  label: const Text('Electricity Receipt Only', style: TextStyle(fontSize: 12)),
+                                ),
+                              ],
+                            ),
+                          ),
+                      ],
                     );
                   },
                 ),
@@ -351,7 +495,7 @@ class _BillDetailScreenState extends ConsumerState<BillDetailScreen> {
                 children: [
                   Expanded(
                     child: OutlinedButton.icon(
-                      onPressed: () => _sharePdf(bill),
+                      onPressed: () => _showShareOptions(bill),
                       icon: const Icon(Icons.share),
                       label: const Text('Share PDF'),
                     ),
